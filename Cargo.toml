@@ -1,0 +1,26 @@
+[package]
+name = "rtsync"
+authors = ["xiaooyh <xiaooyh@qq.com>"]
+description = ""
+exclude = [
+
+]
+
+edition = "2021"
+rust-version = "1.82.0"
+
+[[bin]]
+bench = false
+name = "rtsync"
+path = "crates/core/main.rs"
+
+[workspace]
+members = [
+    "crates/internal", 
+    "crates/manager", 
+    "crates/worker",
+
+]
+
+[dependencies]
+clap = { version = "4.5.20", features = ["derive"] }
