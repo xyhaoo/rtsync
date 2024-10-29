@@ -1,0 +1,18 @@
+[package]
+name = "worker"
+version = "0.1.0"
+edition = "2021"
+
+
+[lib]
+name = "worker"
+bench = false
+
+[dependencies]
+#cgroups-rs = "0.3.4"
+thiserror = "1.0.65"
+toml = "0.8.19"
+serde = { version = "1.0.211", features = ["derive"] }
+glob = "0.3.1"
+merge = "0.1.0"
+tempfile = "3.13.0"

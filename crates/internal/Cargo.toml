@@ -1,0 +1,11 @@
+[package]
+name = "internal"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "internal"
+bench = false
+
+[dependencies]
+#clap = { version = "4.5.20", features = ["derive"] }
