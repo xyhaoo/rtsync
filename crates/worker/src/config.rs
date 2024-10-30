@@ -1,3 +1,4 @@
+use std::cell::{Ref, RefCell};
 use std::str::FromStr;
 // use cgroups_rs::Cgroup;
 
@@ -146,6 +147,9 @@ struct IncludeMirrorConfig {
 
 #[derive(Debug, Default, Deserialize, Clone)]
 struct MemBytes(i64);
+fn memory_limit_default() -> Option<MemBytes> {
+    Some(MemBytes(0))
+}
 // 自定义反序列化函数
 fn deserialize_mem_bytes<'de, D>(deserializer: D) -> Result<Option<MemBytes>, D::Error>
 where
@@ -201,6 +205,7 @@ where
 
 use std::collections::HashMap;
 use std::fs;
+use std::rc::Rc;
 use serde::Deserialize;
 
 use merge::Merge;
@@ -242,7 +247,7 @@ struct MirrorConfig {
     rsync_override: Option<Vec<String>>,
     stage_1_profile: Option<String>,
 
-    #[serde(deserialize_with = "deserialize_mem_bytes")]
+    #[serde(deserialize_with = "deserialize_mem_bytes", default = "memory_limit_default")]
     memory_limit: Option<MemBytes>,
 
     docker_image: Option<String>,
@@ -251,57 +256,69 @@ struct MirrorConfig {
 
     snapshot_path: Option<String>,
 
+    #[serde(rename = "mirrors")]
     child_mirrors: Option<Vec<MirrorConfig>>
 }
 
+impl MirrorConfig {
+    
+}
 
 use glob::glob;
 // load_config加载配置
 fn load_config(cfg_file: Option<&str>) -> Result<Config, Box<dyn std::error::Error>> {
     let mut cfg = Config::default();
 
+    // 使用配置文件初始化Config实例
     if let Some(file) = cfg_file {
         // fs::metadata(file)?;  // 检查配置文件是否存在
         let config_contents = fs::read_to_string(file)?;
         cfg = toml::de::from_str(&config_contents)?;
     }
 
+    // 如果有下层镜像，提取其文件所在位置，解析并插入cfg
     let include_mirrors = cfg.include.include_mirrors.clone();
     if include_mirrors.as_ref().is_some_and(|mirror_paths| !mirror_paths.is_empty()) {
-        
         let include_files = glob(&*include_mirrors.unwrap())?;
+        let mut inc_mir_cfg = IncludeMirrorConfig::default();
         for file in include_files {
-            let mut inc_mir_cfg = IncludeMirrorConfig::default();
             let config_contents = fs::read_to_string(file.unwrap())?;
+            inc_mir_cfg = toml::de::from_str(&config_contents)?;
             cfg.mirrors_config.append(&mut inc_mir_cfg.mirrors);
         }
     }
     let mirrors_config = cfg.mirrors_config.clone();
-    
-    for m in mirrors_config{
-        recursive_mirrors(&mut cfg, None, m)?
-    }
 
+    for m in mirrors_config{
+        recursive_mirrors(&mut cfg, Rc::new(RefCell::new(None)), m)?
+    }
+    println!("{:#?}",cfg.mirrors);
+    
     Ok(cfg)
 }
 
 
-fn recursive_mirrors(cfg: &mut Config, parent: Option<MirrorConfig>, mirror: MirrorConfig) -> Result<(), Box<dyn std::error::Error>> {
-    let mut cur_mir = parent.unwrap_or_else(MirrorConfig::default);
-    cur_mir.child_mirrors = None; // 初始化 child_mirrors 为 None
-
-    // 合并 mirror 到 cur_mir
-    cur_mir.merge(mirror.clone());
-
+fn recursive_mirrors(cfg: &mut Config, parent: Rc<RefCell<Option<MirrorConfig>>>, mirror: MirrorConfig) -> Result<(), Box<dyn std::error::Error>> {
+    let cur_mir = match &*parent.borrow() {
+        Some(mirror_config) => parent.clone(),
+        None => Rc::new(RefCell::new(Some(MirrorConfig::default()))),
+    };
+    if let Some(ref mut mirror_config) = *cur_mir.borrow_mut() {
+        // 初始化 child_mirrors 为 None
+        mirror_config.child_mirrors = None;
+        // 合并 mirror 到 cur_mir，仅补cur_mir中的空值（如果mirror中对应字段有值）
+        mirror_config.merge(mirror.clone());
+    } 
+    
     // 检查是否有子镜像
     if let Some(child_mirrors) = mirror.child_mirrors {
         for child_mir in child_mirrors {
             // 递归处理每个子镜像
-            recursive_mirrors(cfg, Some(cur_mir.clone()), child_mir)?;
+            recursive_mirrors(cfg, Rc::clone(&cur_mir), child_mir)?;
         }
     } else {
         // 如果没有子镜像，添加当前镜像到配置中
-        cfg.mirrors.push(cur_mir);
+        cfg.mirrors.push(cur_mir.clone().take().unwrap());
     }
 
     Ok(())
@@ -370,27 +387,7 @@ exec_on_failure = [
 ]
     "#;
 
-    const INC_BLOB1: &str = r#"
-[[mirrors]]
-name = "debian-cd"
-provider = "two-stage-rsync"
-stage1_profile = "debian"
-use_ipv6 = true
 
-[[mirrors]]
-name = "debian-security"
-provider = "two-stage-rsync"
-stage1_profile = "debian"
-use_ipv6 = true
-    "#;
-
-    const INC_BLOB2: &str = r#"
-[[mirrors]]
-name = "ubuntu"
-provider = "two-stage-rsync"
-stage1_profile = "debian"
-use_ipv6 = true
-    "#;
     // 当给定错误的文件地址
     #[test]
     fn test_wrong_file(){
@@ -406,6 +403,27 @@ use_ipv6 = true
     // 当配置文件有效
     #[test]
     fn test_valid_file(){
+        const INC_BLOB1: &str = r#"
+[[mirrors]]
+name = "debian-cd"
+provider = "two-stage-rsync"
+stage1_profile = "debian"
+use_ipv6 = true
+
+[[mirrors]]
+name = "debian-security"
+provider = "two-stage-rsync"
+stage1_profile = "debian"
+use_ipv6 = true
+    "#;
+
+        const INC_BLOB2: &str = r#"
+[[mirrors]]
+name = "ubuntu"
+provider = "two-stage-rsync"
+stage1_profile = "debian"
+use_ipv6 = true
+    "#;
         //生成一个包含在临时目录（前缀为rtsync）中的文件rtsync
         let tmp_dir = Builder::new()    // 使用tempfile生成的临时目录
             .prefix("rtsync")
@@ -450,10 +468,10 @@ use_ipv6 = true
         assert_eq!(cfg.global.interval, Some(240));
         assert_eq!(cfg.global.retry, Some(3));
         assert_eq!(cfg.global.mirror_dir, Some("/data/mirrors".to_string()));
-        
+
         assert_eq!(cfg.manager.api_base, Some("https://127.0.0.1:5000".to_string()));
         assert_eq!(cfg.server.hostname, Some("worker1.example.com".to_string()));
-        
+
         let m = cfg.mirrors[0].clone();
         assert_eq!(m.name, Some("AOSP".to_string()));
         assert_eq!(m.mirror_dir, Some("/data/git/AOSP".to_string()));
@@ -461,7 +479,106 @@ use_ipv6 = true
         assert_eq!(m.interval, Some(720));
         assert_eq!(m.retry, Some(2));
         assert_eq!(*m.env.unwrap().get("REPO").unwrap(), "/usr/local/bin/aosp-repo".to_string());
-        
+
+        let m = cfg.mirrors[1].clone();
+        assert_eq!(m.name, Some("debian".to_string()));
+        assert_eq!(m.mirror_dir, None);
+        assert_eq!(m.provider, Some(TwoStageRsync));
+
+        let m = cfg.mirrors[2].clone();
+        assert_eq!(m.name, Some("fedora".to_string()));
+        assert_eq!(m.mirror_dir, None);
+        assert_eq!(m.provider, Some(Rsync));
+        assert_eq!(m.exclude_file, Some("/etc/rtsync.d/fedora-exclude.txt".to_string()));
+
+        let m = cfg.mirrors[3].clone();
+        assert_eq!(m.name, Some("debian-cd".to_string()));
+        assert_eq!(m.mirror_dir, None);
+        assert_eq!(m.provider, Some(TwoStageRsync));
+        assert_eq!(m.memory_limit.unwrap().0, 0);
+
+        let m = cfg.mirrors[4].clone();
+        assert_eq!(m.name, Some("debian-security".to_string()));
+
+        let m = cfg.mirrors[5].clone();
+        assert_eq!(m.name, Some("ubuntu".to_string()));
+
+        assert_eq!(cfg.mirrors.len(), 6);
+    }
+
+    // 当配置文件嵌套
+    #[test]
+    fn test_nested_file(){
+        const INC_BLOB1: &str = r#"
+[[mirrors]]
+name = "ipv6s"
+use_ipv6 = true
+	[[mirrors.mirrors]]
+	name = "debians"
+	mirror_subdir = "debian"
+	provider = "two-stage-rsync"
+	stage1_profile = "debian"
+
+		[[mirrors.mirrors.mirrors]]
+		name = "debian-security"
+		upstream = "rsync://test.host/debian-security/"
+		[[mirrors.mirrors.mirrors]]
+		name = "ubuntu"
+		stage1_profile = "ubuntu"
+		upstream = "rsync://test.host2/ubuntu/"
+	[[mirrors.mirrors]]
+	name = "debian-cd"
+	provider = "rsync"
+	upstream = "rsync://test.host3/debian-cd/"
+        "#;
+
+        //生成一个包含在临时目录（前缀为rtsync）中的文件rtsync
+        let tmp_dir = Builder::new()    // 使用tempfile生成的临时目录
+            .prefix("rtsync")
+            .tempdir().expect("failed to create tmp dir");
+        let tmp_dir_path = tmp_dir.path();
+        let tmp_file_path = tmp_dir_path.join("rtsync");
+        //使用File生成的文件，包含在临时目录内，会随其一起被删除，且文件名后面没有英文字母后缀
+        let mut tmp_file = File::create(&tmp_file_path)
+            .expect("failed to create tmp file");
+
+        //构建配置文件内容
+        let inc_section = format!(
+            "\n[include]\ninclude_mirrors = \"{}/*.conf\"",
+            tmp_dir_path.display()
+        );
+        let cur_cfg_blob = format!("{}\n{}", CFG_BLOB, inc_section);
+
+        // 写入临时文件
+        tmp_file.write_all(cur_cfg_blob.as_bytes()).expect("failed to write to tmp file");
+
+        // 配置nest.conf
+        let file_nest = tmp_dir_path.join("nest.conf");
+        fs::write(&file_nest, INC_BLOB1)
+            .expect("failed to write to tmp file nest.conf");
+        // 设置文件权限为 0644
+        let mut perms = fs::metadata(&file_nest)
+            .expect("failed to get metadata").permissions();
+        perms.set_mode(0o644); // 设置权限
+        fs::set_permissions(file_nest, perms).expect("failed to set permissions");
+
+        let cfg = load_config(Some(tmp_file_path.to_str().unwrap())).unwrap();
+        assert_eq!(cfg.global.name, Some("test_worker".to_string()));
+        assert_eq!(cfg.global.interval, Some(240));
+        assert_eq!(cfg.global.retry, Some(3));
+        assert_eq!(cfg.global.mirror_dir, Some("/data/mirrors".to_string()));
+
+        assert_eq!(cfg.manager.api_base, Some("https://127.0.0.1:5000".to_string()));
+        assert_eq!(cfg.server.hostname, Some("worker1.example.com".to_string()));
+
+        let m = cfg.mirrors[0].clone();
+        assert_eq!(m.name, Some("AOSP".to_string()));
+        assert_eq!(m.mirror_dir, Some("/data/git/AOSP".to_string()));
+        assert_eq!(m.provider, Some(Command));
+        assert_eq!(m.interval, Some(720));
+        assert_eq!(m.retry, Some(2));
+        assert_eq!(*m.env.unwrap().get("REPO").unwrap(), "/usr/local/bin/aosp-repo".to_string());
+
         let m = cfg.mirrors[1].clone();
         assert_eq!(m.name, Some("debian".to_string()));
         assert_eq!(m.mirror_dir, None);
@@ -489,10 +606,11 @@ use_ipv6 = true
 
         let m = cfg.mirrors[5].clone();
         assert_eq!(m.name, Some("debian-cd".to_string()));
-        assert_eq!(m.provider, Some(Rsync));
         assert_eq!(m.use_ipv6, Some(true));
-        
+        assert_eq!(m.provider, Some(Rsync));
+
         assert_eq!(cfg.mirrors.len(), 6);
     }
+
 }
 
