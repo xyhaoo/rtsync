@@ -147,6 +147,7 @@ struct IncludeMirrorConfig {
 
 #[derive(Debug, Default, Deserialize, Clone)]
 struct MemBytes(i64);
+
 fn memory_limit_default() -> Option<MemBytes> {
     Some(MemBytes(0))
 }
@@ -209,7 +210,7 @@ use std::rc::Rc;
 use serde::Deserialize;
 
 use merge::Merge;
-#[derive(Debug, Deserialize, Default, Merge, Clone)]
+#[derive(Debug, Deserialize, Default, Clone)]
 #[serde(default)]
 struct MirrorConfig {
     name: Option<String>,
@@ -220,6 +221,7 @@ struct MirrorConfig {
     retry: Option<u64>,
     timeout: Option<u64>,
     mirror_dir: Option<String>,
+    #[serde(rename = "mirror_subdir")]
     mirror_sub_dir: Option<String>,
     log_dir: Option<String>,
     env: Option<HashMap<String, String>>,
@@ -241,11 +243,12 @@ struct MirrorConfig {
     exclude_file: Option<String>,
     username: Option<String>,
     password: Option<String>,
+    #[serde(rename = "rsync_no_timeout")]
     rsync_no_timeo: Option<bool>,
     rsync_timeout: Option<i32>,
     rsync_options: Option<Vec<String>>,
     rsync_override: Option<Vec<String>>,
-    stage_1_profile: Option<String>,
+    stage1_profile: Option<String>,
 
     #[serde(deserialize_with = "deserialize_mem_bytes", default = "memory_limit_default")]
     memory_limit: Option<MemBytes>,
@@ -261,7 +264,42 @@ struct MirrorConfig {
 }
 
 impl MirrorConfig {
-    
+    fn merge(&mut self, other: Self) {
+        self.name = other.name.or(self.name.take());
+        self.provider = other.provider.or(self.provider.take());
+        self.upstream = other.upstream.or(self.upstream.take());
+        self.interval = other.interval.or(self.interval.take());
+        self.retry = other.retry.or(self.retry.take());
+        self.timeout = other.timeout.or(self.timeout.take());
+        self.mirror_dir = other.mirror_dir.or(self.mirror_dir.take());
+        self.mirror_sub_dir = other.mirror_sub_dir.or(self.mirror_sub_dir.take());
+        self.log_dir = other.log_dir.or(self.log_dir.take());
+        self.env = other.env.or(self.env.take());
+        self.role = other.role.or(self.role.take());
+        self.exec_on_success = other.exec_on_success.or(self.exec_on_success.take());
+        self.exec_on_failure = other.exec_on_failure.or(self.exec_on_failure.take());
+        self.exec_on_success_extra = other.exec_on_success_extra.or(self.exec_on_success_extra.take());
+        self.exec_on_failure_extra = other.exec_on_failure_extra.or(self.exec_on_failure_extra.take());
+        self.command = other.command.or(self.command.take());
+        self.fail_on_match = other.fail_on_match.or(self.fail_on_match.take());
+        self.size_pattern = other.size_pattern.or(self.size_pattern.take());
+        self.use_ipv4 = other.use_ipv4.or(self.use_ipv4.take());
+        self.use_ipv6 = other.use_ipv6.or(self.use_ipv6.take());
+        self.exclude_file = other.exclude_file.or(self.exclude_file.take());
+        self.username = other.username.or(self.username.take());
+        self.password = other.password.or(self.password.take());
+        self.rsync_no_timeo = other.rsync_no_timeo.or(self.rsync_no_timeo.take());
+        self.rsync_timeout = other.rsync_timeout.or(self.rsync_timeout.take());
+        self.rsync_options = other.rsync_options.or(self.rsync_options.take());
+        self.rsync_override = other.rsync_override.or(self.rsync_override.take());
+        self.stage1_profile = other.stage1_profile.or(self.stage1_profile.take());
+        self.memory_limit = other.memory_limit.or(self.memory_limit.take());
+        self.docker_image = other.docker_image.or(self.docker_image.take());
+        self.docker_volumes = other.docker_volumes.or(self.docker_volumes.take());
+        self.docker_options = other.docker_options.or(self.docker_options.take());
+        self.snapshot_path = other.snapshot_path.or(self.snapshot_path.take());
+        self.child_mirrors = other.child_mirrors.or(self.child_mirrors.take());
+    }
 }
 
 use glob::glob;
@@ -292,12 +330,10 @@ fn load_config(cfg_file: Option<&str>) -> Result<Config, Box<dyn std::error::Err
     for m in mirrors_config{
         recursive_mirrors(&mut cfg, Rc::new(RefCell::new(None)), m)?
     }
-    println!("{:#?}",cfg.mirrors);
-    
     Ok(cfg)
 }
 
-
+// 依据mirror_config配置cfg的mirror字段
 fn recursive_mirrors(cfg: &mut Config, parent: Rc<RefCell<Option<MirrorConfig>>>, mirror: MirrorConfig) -> Result<(), Box<dyn std::error::Error>> {
     let cur_mir = match &*parent.borrow() {
         Some(mirror_config) => parent.clone(),
@@ -306,21 +342,26 @@ fn recursive_mirrors(cfg: &mut Config, parent: Rc<RefCell<Option<MirrorConfig>>>
     if let Some(ref mut mirror_config) = *cur_mir.borrow_mut() {
         // 初始化 child_mirrors 为 None
         mirror_config.child_mirrors = None;
-        // 合并 mirror 到 cur_mir，仅补cur_mir中的空值（如果mirror中对应字段有值）
+        // 合并 mirror 到 cur_mir，用mirror中的全部非空字段重写cur_mir
         mirror_config.merge(mirror.clone());
-    } 
+        
+    };
     
     // 检查是否有子镜像
     if let Some(child_mirrors) = mirror.child_mirrors {
         for child_mir in child_mirrors {
             // 递归处理每个子镜像
-            recursive_mirrors(cfg, Rc::clone(&cur_mir), child_mir)?;
+            // 当child_mirrors内有多个元素，即存在一个以上的同级镜像时
+            // 应确保处理第一个镜像的操作不会影响处理第二个镜像时传入的parent
+            // 所以应该在递归开始前拷贝cur_mir，传入复制体
+            // recursive_mirrors(cfg, Rc::clone(&cur_mir), child_mir)?;
+            let parent_copy = Rc::new(RefCell::new(cur_mir.borrow().clone())); 
+            recursive_mirrors(cfg, parent_copy, child_mir)?;
         }
     } else {
         // 如果没有子镜像，添加当前镜像到配置中
-        cfg.mirrors.push(cur_mir.clone().take().unwrap());
+        cfg.mirrors.push(cur_mir.take().unwrap());
     }
-
     Ok(())
 }
 
@@ -595,14 +636,14 @@ use_ipv6 = true
         assert_eq!(m.mirror_dir, None);
         assert_eq!(m.provider, Some(TwoStageRsync));
         assert_eq!(m.use_ipv6, Some(true));
-        assert_eq!(m.stage_1_profile, Some("debian".to_string()));
+        assert_eq!(m.stage1_profile, Some("debian".to_string()));
 
         let m = cfg.mirrors[4].clone();
         assert_eq!(m.name, Some("ubuntu".to_string()));
         assert_eq!(m.mirror_dir, None);
         assert_eq!(m.provider, Some(TwoStageRsync));
         assert_eq!(m.use_ipv6, Some(true));
-        assert_eq!(m.stage_1_profile, Some("ubuntu".to_string()));
+        assert_eq!(m.stage1_profile, Some("ubuntu".to_string()));
 
         let m = cfg.mirrors[5].clone();
         assert_eq!(m.name, Some("debian-cd".to_string()));
