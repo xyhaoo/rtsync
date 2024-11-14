@@ -9,8 +9,8 @@ enum ConfigError {
     // Add other error types as needed
 }
 
-#[derive(Debug, PartialEq, Deserialize, Clone)]
-enum ProviderEnum {
+#[derive(Debug, PartialEq, Deserialize, Clone, Eq)]
+pub enum ProviderEnum {
     Rsync,
     TwoStageRsync,
     Command,
@@ -35,8 +35,8 @@ where
 //Config代表worker配置选项
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
-struct Config {
-    global: GlobalConfig,
+pub struct Config {
+    pub(crate) global: GlobalConfig,
     manager: ManagerConfig,
     server: ServerConfig,
     c_group: CGroupConfig,
@@ -52,12 +52,12 @@ struct Config {
 #[serde(default)]
 struct GlobalConfig {
     name: Option<String>,
-    log_dir: Option<String>,
-    mirror_dir: Option<String>,
-    concurrent: Option<usize>,
-    interval: Option<usize>,
-    retry: Option<usize>,
-    timeout: Option<usize>,
+    pub(crate) log_dir: Option<String>,
+    pub(crate) mirror_dir: Option<String>,
+    concurrent: Option<u64>,
+    pub(crate) interval: Option<u64>,
+    pub(crate) retry: Option<u64>,
+    pub(crate) timeout: Option<u64>,
 
     exec_on_success: Option<Vec<String>>,
     exec_on_failure: Option<Vec<String>>,
@@ -100,7 +100,7 @@ struct ServerConfig {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
-struct CGroupConfig {
+pub struct CGroupConfig {
     enabled: Option<bool>,
     base_path: Option<String>,
     group: Option<String>,
@@ -126,10 +126,10 @@ struct BtrfsSnapshotConfig {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
-struct DockerConfig {
+pub struct DockerConfig {
     enable: Option<bool>,
-    volume: Option<Vec<String>>,
-    options: Option<Vec<String>>,
+    pub(crate) volumes: Option<Vec<String>>,
+    pub(crate) options: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -145,9 +145,16 @@ struct IncludeMirrorConfig {
 }
 
 
-#[derive(Debug, Default, Deserialize, Clone)]
-struct MemBytes(i64);
-
+#[derive(Debug, Default, Deserialize, Clone, Eq, PartialEq)]
+pub struct MemBytes(pub(crate) i64);
+impl MemBytes {
+    fn r#type(&self) -> String{
+        "bytes".to_string()
+    }
+    pub(crate) fn value(&self) -> i64{
+        self.0
+    }
+}
 fn memory_limit_default() -> Option<MemBytes> {
     Some(MemBytes(0))
 }
@@ -210,57 +217,57 @@ use std::rc::Rc;
 use serde::Deserialize;
 
 use merge::Merge;
-#[derive(Debug, Deserialize, Default, Clone)]
+#[derive(Debug, Deserialize, Default, Clone, Eq, PartialEq)]
 #[serde(default)]
-struct MirrorConfig {
-    name: Option<String>,
+pub(crate) struct MirrorConfig {
+    pub(crate) name: Option<String>,
     #[serde(deserialize_with = "deserialize_provider_enum")]
-    provider: Option<ProviderEnum>,
-    upstream: Option<String>,
-    interval: Option<u64>,
-    retry: Option<u64>,
-    timeout: Option<u64>,
-    mirror_dir: Option<String>,
+    pub(crate) provider: Option<ProviderEnum>,
+    pub(crate) upstream: Option<String>,
+    pub(crate) interval: Option<u64>,
+    pub(crate) retry: Option<u64>,
+    pub(crate) timeout: Option<u64>,
+    pub(crate) mirror_dir: Option<String>,
     #[serde(rename = "mirror_subdir")]
-    mirror_sub_dir: Option<String>,
-    log_dir: Option<String>,
-    env: Option<HashMap<String, String>>,
-    role: Option<String>,
+    pub(crate) mirror_sub_dir: Option<String>,
+    pub(crate) log_dir: Option<String>,
+    pub(crate) env: Option<HashMap<String, String>>,
+    pub(crate) role: Option<String>,
 
     //这两个选项覆盖全局选项
-    exec_on_success: Option<Vec<String>>,
-    exec_on_failure: Option<Vec<String>>,
+    pub(crate) exec_on_success: Option<Vec<String>>,
+    pub(crate) exec_on_failure: Option<Vec<String>>,
 
     //
-    exec_on_success_extra: Option<Vec<String>>,
-    exec_on_failure_extra: Option<Vec<String>>,
+    pub(crate) exec_on_success_extra: Option<Vec<String>>,
+    pub(crate) exec_on_failure_extra: Option<Vec<String>>,
 
-    command: Option<Vec<String>>,
-    fail_on_match: Option<String>,
-    size_pattern: Option<String>,
-    use_ipv4: Option<bool>,
-    use_ipv6: Option<bool>,
-    exclude_file: Option<String>,
-    username: Option<String>,
-    password: Option<String>,
+    pub(crate) command: Option<Vec<String>>,
+    pub(crate) fail_on_match: Option<String>,
+    pub(crate) size_pattern: Option<String>,
+    pub(crate) use_ipv4: Option<bool>,
+    pub(crate) use_ipv6: Option<bool>,
+    pub(crate) exclude_file: Option<String>,
+    pub(crate) username: Option<String>,
+    pub(crate) password: Option<String>,
     #[serde(rename = "rsync_no_timeout")]
-    rsync_no_timeo: Option<bool>,
-    rsync_timeout: Option<i32>,
-    rsync_options: Option<Vec<String>>,
-    rsync_override: Option<Vec<String>>,
-    stage1_profile: Option<String>,
+    pub(crate) rsync_no_timeo: Option<bool>,
+    pub(crate) rsync_timeout: Option<i32>,
+    pub(crate) rsync_options: Option<Vec<String>>,
+    pub(crate) rsync_override: Option<Vec<String>>,
+    pub(crate) stage1_profile: Option<String>,
 
     #[serde(deserialize_with = "deserialize_mem_bytes", default = "memory_limit_default")]
-    memory_limit: Option<MemBytes>,
+    pub(crate) memory_limit: Option<MemBytes>,
 
-    docker_image: Option<String>,
-    docker_volumes: Option<Vec<String>>,
-    docker_options: Option<Vec<String>>,
+    pub(crate) docker_image: Option<String>,
+    pub(crate) docker_volumes: Option<Vec<String>>,
+    pub(crate) docker_options: Option<Vec<String>>,
 
-    snapshot_path: Option<String>,
+    pub(crate) snapshot_path: Option<String>,
 
     #[serde(rename = "mirrors")]
-    child_mirrors: Option<Vec<MirrorConfig>>
+    pub(crate) child_mirrors: Option<Vec<MirrorConfig>>
 }
 
 impl MirrorConfig {
@@ -301,6 +308,7 @@ impl MirrorConfig {
         self.child_mirrors = other.child_mirrors.or(self.child_mirrors.take());
     }
 }
+
 
 use glob::glob;
 // load_config加载配置
@@ -653,5 +661,25 @@ use_ipv6 = true
         assert_eq!(cfg.mirrors.len(), 6);
     }
 
+    use crate::provider::MirrorProvider;
+    #[test]
+    fn test_valid_provider(){
+        //生成一个包含在临时目录（前缀为rtsync）中的文件rtsync
+        let tmp_dir = Builder::new()    // 使用tempfile生成的临时目录
+            .prefix("rtsync")
+            .tempdir().expect("failed to create tmp dir");
+        let tmp_dir_path = tmp_dir.path();
+        let tmp_file_path = tmp_dir_path.join("rtsync");
+        //使用File生成的文件，包含在临时目录内，会随其一起被删除，且文件名后面没有英文字母后缀
+        let mut tmp_file = File::create(&tmp_file_path)
+            .expect("failed to create tmp file");
+
+        // 写入临时文件
+        tmp_file.write_all(CFG_BLOB.as_bytes()).expect("failed to write to tmp file");
+        let cfg = load_config(Some(tmp_file_path.to_str().unwrap())).unwrap();
+        
+        // let providers:HashMap<String, Box<dyn MirrorProvider>> = HashMap::new();
+    
+    }
 }
 

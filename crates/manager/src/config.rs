@@ -34,16 +34,16 @@ impl From<toml::de::Error> for ConfigError {
 }
 
 // Config是顶级的可序列化配置结构
-#[derive(Debug, Default, Deserialize)]
-struct Config {
+#[derive(Debug, Default, Deserialize, Clone)]
+pub(crate) struct Config {
     #[serde(default)]
-    debug: bool,
+    pub(crate) debug: bool,
     server: ServerConfig,
-    files: FileConfig,
+    pub(crate) files: FileConfig,
 }
 
 // ServerConfig表示HTTP服务器的配置
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Clone)]
 struct ServerConfig {
     #[serde(default)]
     addr: Option<String>,
@@ -56,16 +56,16 @@ struct ServerConfig {
 }
 
 // FileConfig包含特殊文件的路径
-#[derive(Debug, Default, Deserialize)]
-struct FileConfig {
+#[derive(Debug, Default, Deserialize, Clone)]
+pub(crate) struct  FileConfig {
     #[serde(default)]
     status_file: Option<String>,
     #[serde(default)]
-    db_file: Option<String>,
+    pub(crate) db_file: Option<String>,
     #[serde(default)]
-    db_type: Option<String>,
+    pub(crate) db_type: Option<String>,
     #[serde(default)]
-    ca_cert: Option<String>,
+    pub(crate) ca_cert: Option<String>,
 }
 
 // LoadConfig从指定文件加载配置

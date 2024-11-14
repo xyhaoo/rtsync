@@ -1,6 +1,14 @@
 mod config;
-use clap::{Parser, Subcommand};
+mod db;
+mod db_leveldb;
+mod db_redis;
+mod db_rocksdb;
+mod middleware;
+mod server;
 
+
+use clap::{Parser, Subcommand};
+#[macro_use] extern crate rocket;
 #[derive(Parser)]
 #[command(name = "manager", version = "1.0", author = "Your Name", about = "An example CLI application")]
 pub struct Cli{

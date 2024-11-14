@@ -19,8 +19,9 @@ members = [
     "crates/internal", 
     "crates/manager", 
     "crates/worker",
-
 ]
 
 [dependencies]
 clap = { version = "4.5.20", features = ["derive"] }
+log = "0.4.22"
+env_logger = "0.11.5"

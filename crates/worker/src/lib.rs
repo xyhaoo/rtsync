@@ -1,16 +1,14 @@
 mod config;
+mod provider;
+mod common;
+mod cgroup;
+mod hooks;
+mod zfs_hook;
+mod context;
+mod cmd_provider;
+mod base_provider;
+mod runner;
+mod docker;
+mod config_diff;
 
-pub fn add(left: u64, right: u64) -> u64 {
-    left + right
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
-}
