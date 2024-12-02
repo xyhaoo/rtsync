@@ -10,5 +10,6 @@ mod base_provider;
 mod runner;
 mod docker;
 mod config_diff;
+mod schedule;
 
 

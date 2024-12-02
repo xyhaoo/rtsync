@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 
 struct CmdConfig{
@@ -13,7 +14,7 @@ struct CmdConfig{
     interval: DateTime<Utc>,
     retry: u64,
     timeout: DateTime<Utc>,
-    env: Vec<(String, String)>,
+    env: HashMap<String, String>,
     fail_on_match: String,
     size_pattern: String,
 }
@@ -21,3 +22,5 @@ struct CmdConfig{
 struct CmdProvider{
     
 }
+
+// impl 

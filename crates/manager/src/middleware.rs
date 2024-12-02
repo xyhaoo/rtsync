@@ -1,46 +1,65 @@
-// use rocket::{Request, Data, Response, outcome, State};
-// use rocket::http::Status;
-// use rocket::fairing::{Fairing, Info, Kind};
-// use rocket::tokio::sync::Mutex;
-// use std::sync::Arc;
-// use std::fmt;
-// use crate::server::Manager;
-// // 错误日志中间件
-// struct ErrorLogger;
-// 
-// #[rocket::async_trait]
-// 
-// impl Fairing for ErrorLogger {
-//     fn info(&self) -> Info {
-//         Info {
-//             name: "Error Logger",
-//             kind: Kind::Request | Kind::Response,
-//         }
-//     }
-// 
-//     async fn on_request(&self, _req: &rocket::Request, _data: Data<'_>) {
-//         // 可以在此记录请求的详细信息，如果需要
-//     }
-// 
-//     async fn on_response(&self, _req: &rocket::Request, res: &mut Response<'_>) {
-//         if let Some(err) = res.get_error() {
-//             // 记录错误信息
-//             println!("Request: {} {} - Error: {}", _req.method(), _req.uri(), err);
-//         }
-//     }
-// }
-// 
-// // workerID 校验中间件
-// #[rocket::async_trait]
-// impl<'r> rocket::request::FromParam<'r> for Manager {
-//     async fn from_param(param: rocket::Request<'r>, worker_id: &str) -> rocket::Outcome<'r, Self> {
-//         // 模拟验证 workerID
-//         let manager = Manager { adapter: Adapter };
-//         if let Err(err) = manager.adapter.get_worker(worker_id) {
-//             let err_message = format!("Invalid workerID {}: {}", worker_id, err);
-//             return Outcome::Failure((Status::BadRequest, err_message));
-//         }
-//         Outcome::Success(manager)
-//     }
-// }
-// 
+use rocket::{Request, Data, Response, Rocket};
+use rocket::fairing::{Fairing, Info, Kind};
+use rocket::http::Status;
+use rocket::tokio::sync::Mutex;
+use std::sync::Arc;
+use log::{error, info};
+use rocket::request::{FromRequest, Outcome};
+use rocket::serde::json::Json;
+use crate::db::DbAdapter;
+use crate::server;
+
+#[derive(Default)]
+pub(crate) struct ContextErrorLogger;
+
+#[rocket::async_trait]
+impl Fairing for ContextErrorLogger {
+    fn info(&self) -> Info {
+        Info {
+            name: "Error Logger",
+            kind: Kind::Response,
+        }
+    }
+    async fn on_response<'r>(&self, _request: &'r Request<'_>, response: &mut Response<'r>) {
+        // Here we can check for errors after request handling
+        if response.status() != Status::Ok {
+            // Log errors in the response status or other conditions
+            error!(
+                "请求: {} {}发生错误，状态码: {}",
+                _request.method(),
+                _request.uri(),
+                response.status()
+            );
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct CheckWorkerId;
+
+#[rocket::async_trait]
+impl<'r> FromRequest<'r> for CheckWorkerId {
+    type Error = Json<server::Response>;
+
+    async fn from_request(request: &'r Request<'_>) -> Outcome<Self, Self::Error> {
+        let id = request.param::<&str>(1).unwrap().unwrap();
+        match request.rocket().state::<Box<dyn DbAdapter>>(){
+            Some(adapter) => {
+                if let Err(_) = adapter.get_worker(id) {
+                    // 这个worker不存在
+                    let error = format!("无效的worker_id: {}", id);
+                    error!("{}", error);
+                    return Outcome::Error((Status::BadRequest, Json(server::Response::Error (error))));
+                }
+            }
+            None => {
+                let error = "没有找到adapter".to_string();
+                error!("{}", error);
+                return Outcome::Error((Status::BadRequest, Json(server::Response::Error (error))));
+            }
+        }
+        Outcome::Success(CheckWorkerId)
+    }
+}
+
+

@@ -4,8 +4,8 @@ mod db_leveldb;
 mod db_redis;
 mod db_rocksdb;
 mod middleware;
-mod server;
-
+pub mod server;
+mod server_test;
 
 use clap::{Parser, Subcommand};
 #[macro_use] extern crate rocket;
@@ -36,3 +36,4 @@ pub struct Cli{
     #[arg(long = "db-type")]
     pub db_type: Option<String>,
 }
+

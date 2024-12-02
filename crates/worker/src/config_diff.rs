@@ -55,7 +55,7 @@ impl MirrorCfgTrans {
             DIFF_DELETE => "del".to_string(),
             _ => "add".to_string(),
         };
-        format!("{{{}, {}}}", op, self.mir_cfg.name.clone().unwrap_or(String::new()))
+        format!("{{{}, {}}}", op, self.mir_cfg.name.clone().unwrap_or_default())
     }
 }
 

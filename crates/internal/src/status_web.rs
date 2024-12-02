@@ -4,7 +4,7 @@ use crate::msg::MirrorStatus;
 use crate::status::SyncStatus;
 
 #[derive(Debug, Clone, Default)]
-pub struct TextTime(DateTime<FixedOffset>);
+pub struct TextTime(pub DateTime<Utc>);
 
 // 实现自定义时间格式 "2006-01-02 15:04:05 -0700" 的序列化和反序列化
 impl Serialize for TextTime {
@@ -25,7 +25,7 @@ impl<'de> Deserialize<'de> for TextTime {
         let s = String::deserialize(deserializer)?;
         let dt = DateTime::parse_from_str(&s, "%Y-%m-%d %H:%M:%S %z")
             .map_err(serde::de::Error::custom)?;
-        Ok(TextTime(dt))
+        Ok(TextTime(DateTime::from(dt)))
     }
 }
 
@@ -74,21 +74,21 @@ pub struct WebMirrorStatus {
 
 
 // 实现 BuildWebMirrorStatus 函数
-pub fn build_web_mirror_status(m: &MirrorStatus) -> WebMirrorStatus {
+pub fn build_web_mirror_status(m: MirrorStatus) -> WebMirrorStatus {
     WebMirrorStatus {
-        name: m.name.clone(),
+        name: m.name,
         is_master: m.is_master,
-        status: m.status.clone(),
-        last_update: TextTime(DateTime::from(m.last_update)),
-        last_update_ts: StampTime(DateTime::from(m.last_update)),
-        last_started: TextTime(DateTime::from(m.last_started)),
-        last_started_ts: StampTime(DateTime::from(m.last_started)),
-        last_ended: TextTime(DateTime::from(m.last_ended)),
-        last_ended_ts: StampTime(DateTime::from(m.last_ended)),
-        scheduled: TextTime(DateTime::from(m.scheduled)),
-        scheduled_ts: StampTime(DateTime::from(m.scheduled)),
-        upstream: m.upstream.clone(),
-        size: m.size.clone(),
+        status: m.status,
+        last_update: TextTime(m.last_update),
+        last_update_ts: StampTime(m.last_update),
+        last_started: TextTime(m.last_started),
+        last_started_ts: StampTime(m.last_started),
+        last_ended: TextTime(m.last_ended),
+        last_ended_ts: StampTime(m.last_ended),
+        scheduled: TextTime(m.scheduled),
+        scheduled_ts: StampTime(m.scheduled),
+        upstream: m.upstream,
+        size: m.size,
     }
 }
 
@@ -107,13 +107,13 @@ mod tests{
         let m = WebMirrorStatus {
             name: String::from("tunalinux"),
             status: SyncStatus::Success,
-            last_update: TextTime(t),
+            last_update: TextTime(DateTime::from(t)),
             last_update_ts: StampTime(t.with_timezone(&Utc)),
-            last_started: TextTime(t),
+            last_started: TextTime(DateTime::from(t)),
             last_started_ts: StampTime(t.with_timezone(&Utc)),
-            last_ended: TextTime(t),
+            last_ended: TextTime(DateTime::from(t)),
             last_ended_ts: StampTime(t.with_timezone(&Utc)),
-            scheduled: TextTime(t),
+            scheduled: TextTime(DateTime::from(t)),
             scheduled_ts: StampTime(t.with_timezone(&Utc)),
             size: String::from("5GB"),
             upstream: String::from("rsync://mirrors.tuna.tsinghua.edu.cn/tunalinux/"),
@@ -164,7 +164,7 @@ mod tests{
             ..Default::default()
         };
 
-        let m2 = build_web_mirror_status(&m);
+        let m2 = build_web_mirror_status(m.clone());
         assert_eq!(m2.name, m.name);
         assert_eq!(m2.status, m.status);
         assert_eq!(m2.last_update.0.timestamp(), m.last_update.timestamp());

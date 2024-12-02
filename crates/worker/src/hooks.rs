@@ -17,11 +17,11 @@ pub trait JobHook{
     fn post_fail(&self) -> Result<(), Box<dyn Error>>;
 }
 
-pub struct EmptyHook<T: MirrorProvider>{
-    pub(crate) provider: T,
+pub struct EmptyHook{
+    pub(crate) provider: Box<dyn MirrorProvider>,
 }
 
-impl<T: MirrorProvider> EmptyHook<T> {
+impl JobHook for EmptyHook<> {
     fn per_job(&self) -> Result<(), Box<dyn Error>>{
         Ok(())
     }

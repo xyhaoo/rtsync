@@ -100,14 +100,14 @@ struct ServerConfig {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
-pub struct CGroupConfig {
+pub(crate) struct CGroupConfig {
     enabled: Option<bool>,
     base_path: Option<String>,
-    group: Option<String>,
+    pub(crate) group: Option<String>,
     sub_system: Option<String>,
-    is_unified: Option<bool>,
-    // cg_mgr_v1: cgroups_rs::Cgroup,
-    // cg_mgr_v2: cgroups_rs::Cgroup,
+    pub(crate) is_unified: Option<bool>,
+    cg_mgr_v1: Option<String>,
+    pub(crate) cg_mgr_v2: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]

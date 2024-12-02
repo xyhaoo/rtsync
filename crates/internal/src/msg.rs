@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, FixedOffset, Utc};
 use serde::{Deserialize, Serialize};
 use serde::de::{self, Deserializer};
 use serde::ser::Serializer;
@@ -59,9 +59,9 @@ pub struct MirrorSchedules {
 }
 
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Default)]
 pub struct MirrorSchedule {
-    pub name: String,
+    pub mirror_name: String,
     pub next_schedule: DateTime<Utc>,
 }
 
@@ -153,6 +153,17 @@ pub struct ClientCmd {
     pub worker_id: String,
     pub args: Vec<String>,
     pub options: HashMap<String, bool>,
+}
+impl Default for ClientCmd {
+    fn default() -> Self {
+        ClientCmd{
+            cmd: CmdVerb::Start,
+            mirror_id: "".to_string(),
+            worker_id: "".to_string(),
+            args: Vec::new(),
+            options: HashMap::new(),
+        }
+    }
 }
 
 

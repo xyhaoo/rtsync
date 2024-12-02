@@ -38,21 +38,21 @@ impl From<toml::de::Error> for ConfigError {
 pub(crate) struct Config {
     #[serde(default)]
     pub(crate) debug: bool,
-    server: ServerConfig,
+    pub(crate) server: ServerConfig,
     pub(crate) files: FileConfig,
 }
 
 // ServerConfig表示HTTP服务器的配置
 #[derive(Debug, Default, Deserialize, Clone)]
-struct ServerConfig {
+pub(crate) struct ServerConfig {
     #[serde(default)]
-    addr: Option<String>,
+    pub(crate) addr: Option<String>,
     #[serde(default)]
-    port: Option<u32>,
+    pub(crate) port: Option<u32>,
     #[serde(default)]
-    ssl_cert: Option<String>,
+    pub(crate) ssl_cert: Option<String>,
     #[serde(default)]
-    ssl_key: Option<String>,
+    pub(crate) ssl_key: Option<String>,
 }
 
 // FileConfig包含特殊文件的路径

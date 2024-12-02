@@ -1,6 +1,6 @@
-mod logger;
+pub mod logger;
 pub mod status;
-mod status_web;
+pub mod status_web;
 pub mod msg;
-mod util;
+pub mod util;
 mod version;

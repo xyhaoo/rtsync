@@ -20,7 +20,7 @@ const _LOG_FILE_KEY: &str = "log_file";
 
 
 // MirrorProvider trait
-pub trait MirrorProvider: Clone+Sized{
+pub trait MirrorProvider: /*Clone+Sized*/{
     // name
     fn name(&self) -> String;
     fn upstream(&self) -> String;
@@ -49,19 +49,19 @@ pub trait MirrorProvider: Clone+Sized{
     fn interval(&self)-> DateTime<Utc>;
     fn retry(&self) -> u64;
     fn timeout(&self) -> DateTime<Utc>;
-    
+
     fn working_dir(&self) -> String;
     fn log_dir(&self) -> String;
     fn log_file(&self) -> String;
     fn is_master(&self) -> bool;
     fn data_size(&self) -> String;
-    
-    // enter context
-    fn enter_context<T: Clone>(&self) -> Context<T>;
-    // exit context
-    fn exit_context<T: Clone>(&self) -> Context<T>;
-    // return context
-    fn context<T: Clone>(&self) -> Context<T>;
+
+    // // enter context
+    // fn enter_context<T: Clone>(&self) -> Context<T>;
+    // // exit context
+    // fn exit_context<T: Clone>(&self) -> Context<T>;
+    // // return context
+    // fn context<T: Clone>(&self) -> Context<T>;
 }
 
 

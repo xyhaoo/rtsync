@@ -50,7 +50,7 @@ where T: MirrorProvider
         empty_hook: EmptyHook{
             provider: p.clone(),
         },
-        image: m_cfg.docker_image.clone().unwrap_or_else(||"".to_string()),
+        image: m_cfg.docker_image.clone().unwrap_or_default(),
         volumes,
         options,
         memory_limit: m_cfg.memory_limit.clone().unwrap(),
