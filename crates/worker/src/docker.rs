@@ -1,28 +1,30 @@
+use crate::provider::_LOG_FILE_KEY;
 use std::cell::RefCell;
-use std::{fs, thread, time::Duration};
+use std::{fs, io, thread, time::Duration};
+use std::error::Error;
 use std::fs::Permissions;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 use std::rc::Rc;
-use log::{debug, error};
+use log::{debug, error, warn};
 use crate::config::{DockerConfig, MemBytes, MirrorConfig};
 
 use crate::context::Context;
-use crate::hooks::EmptyHook;
+use crate::hooks::{EmptyHook, JobHook};
 use crate::provider::MirrorProvider;
 
-pub(crate) struct DockerHook<T>
-where T: MirrorProvider
-{
-    empty_hook: EmptyHook<T>,
+pub(crate) struct DockerHook<T: Clone> {
+    pub(crate) empty_hook: EmptyHook<T>,
     pub(crate) image: String,
-    volumes: Vec<String>,
+    pub(crate) volumes: Vec<String>,
     pub(crate) options: Vec<String>,
     pub(crate) memory_limit: MemBytes,
 }
 
-fn new_docker_hook<T>(p: &T, g_cfg: &DockerConfig, m_cfg: &MirrorConfig) -> DockerHook<T>
-where T: MirrorProvider
+fn new_docker_hook<T: Clone>(
+    p: Box<dyn MirrorProvider<ContextStoreVal=T>>, 
+    g_cfg: DockerConfig, m_cfg: MirrorConfig) 
+    -> DockerHook<T>
 {
     let mut volumes: Vec<String> = vec![];
     if let Some(v) = &g_cfg.volumes{
@@ -48,53 +50,56 @@ where T: MirrorProvider
 
     DockerHook{
         empty_hook: EmptyHook{
-            provider: p.clone(),
+            provider: p,
         },
-        image: m_cfg.docker_image.clone().unwrap_or_default(),
+        image: m_cfg.docker_image.unwrap_or_default(),
         volumes,
         options,
-        memory_limit: m_cfg.memory_limit.clone().unwrap(),
+        memory_limit: m_cfg.memory_limit.unwrap_or_default(),
     }
 }
 
-impl<T: MirrorProvider> DockerHook<T>{
-    fn pre_exec(&self) -> Result<(), Box<dyn std::error::Error>>{
-        let p = self.empty_hook.provider.clone();
+impl JobHook for DockerHook<Vec<String>>{
+    fn pre_exec(&self) -> Result<(), Box<dyn Error>>{
+        let p = self.empty_hook.provider.as_ref();
         let log_dir = p.log_dir();
         let log_file = p.log_file();
         let working_dir = p.working_dir();
 
-
-        fs::create_dir_all(&working_dir)?;
-        debug!("创建了文件夹：{}", &working_dir);
-        if let Err(e) = fs::set_permissions(&working_dir, Permissions::from_mode(0o755)){
-            Err(e).expect(format!("创建文件夹:{} 失败",&working_dir).as_str())
+        // 如果目录不存在，则创建目录
+        if let Err(err) = fs::read_dir(&working_dir) {
+            if err.kind() == io::ErrorKind::NotFound {
+                debug!("创建文件夹：{}", &working_dir);
+                fs::create_dir_all(&working_dir)?;
+                if let Err(e) = fs::set_permissions(&working_dir, Permissions::from_mode(0o755)){
+                    return Err(format!("创建文件夹 {} 失败: {}",&working_dir, e).into())
+                }
+            }
         }
-
+        
         // 重写working_dir
-        let ctx = Rc::new(RefCell::new(p.enter_context()));
-        Context::set(
-            Rc::clone(&ctx),
-            "volumes",
-            vec![
-                format!("{}:{}", &log_dir, log_dir),
-                format!("{}:{}", &log_file, &log_file),
-                format!("{}:{}", &working_dir, &working_dir)]);
+        let ctx = p.enter_context();
+        ctx.set(
+            "volumes".to_string(), vec![
+            format!("{}:{}", &log_dir, log_dir),
+            format!("{}:{}", &log_file, &log_file),
+            format!("{}:{}", &working_dir, &working_dir)]);
 
         Ok(())
     }
 
-    fn post_exec<U: Clone>(&self) -> Result<(), Box<dyn std::error::Error>>{
-        // sh.Command(
-        // 	"docker", "rm", "-f", d.Name(),
-        // ).Run()
+    fn post_exec(&self) -> Result<(), Box<dyn Error>>{
+        // Command::new("docker")
+        //  .args(["rm", "-f", self.name()])
+        //  .status()
+        
         let name = self.name();
         let mut retry = 10;
         loop{
             if retry == 0 { break }
             let output = Command::new("docker")
                 .args(["ps", "-a",
-                    "filter", format!("name=^{}$", name).as_str(),
+                    "--filter", format!("name=^{}$", name).as_str(),
                     "--format", "{{.Status}}"])
                 .output();
             match output {
@@ -112,37 +117,46 @@ impl<T: MirrorProvider> DockerHook<T>{
             thread::sleep(Duration::from_secs(1));  // 一秒
             retry -= 1;
         }
-        self.empty_hook.provider.exit_context::<U>();
+        if retry == 0{
+            warn!("容器 {} 未自动删除，下一次同步可能失败", name)
+        }
+        self.empty_hook.provider.exit_context()?;
         Ok(())
     }
     
+}
+impl DockerHook<Vec<String>> {
     // volumes返回已配置的卷和运行时需要的卷
     // 包括mirror dirs和log file
-    pub(crate) fn volumes<U: Clone + Into<Vec<String>>>(&self) -> Vec<String>{
+    pub(crate) fn volumes(&self) -> Vec<String>{
         let mut vols = Vec::with_capacity(self.volumes.len());
         vols.extend(self.volumes.iter().cloned());
-        
-        let p = self.empty_hook.provider.clone();
-        let ctx = Rc::new(RefCell::new(p.context::<U>()));
-        if let Some(values) = Context::get(Rc::clone(&ctx), "volumes"){
-            vols.extend(values.into())
+
+        let p = self.empty_hook.provider.as_ref();
+        let ctx = p.context();
+        if let Some(ivs) = ctx.get("volumes") {
+            vols.extend(ivs.iter().cloned());
         }
         vols
     }
-    
-    fn log_file<U: Clone + Into<String>>(&self) -> String{
-        let p = self.empty_hook.provider.clone();
-        let ctx = Rc::new(RefCell::new(p.context::<U>()));
-        if let Some(value) = Context::get(Rc::clone(&ctx), ":docker"){
-            return value.into()
+}
+
+impl DockerHook<String> {
+    pub(crate) fn log_file(&self) -> String{
+        let p = self.empty_hook.provider.as_ref();
+        let ctx = p.context();
+        if let Some(value) = ctx.get(&format!("{_LOG_FILE_KEY}:docker")){
+            return value
         }
         p.log_file()
     }
     
+}
+impl<T: Clone> DockerHook<T>{
     pub(crate) fn name(&self) -> String {
-        format!("rtsync-job-{}", self.empty_hook.provider.name())
+        let p = self.empty_hook.provider.as_ref();
+        format!("rtsync-job-{}", p.name())
     }
-    
 }
 
 

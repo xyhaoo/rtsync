@@ -11,5 +11,11 @@ mod runner;
 mod docker;
 mod config_diff;
 mod schedule;
+mod rsync_provider;
+mod two_stage_rsync_provider;
+mod loglimit_hook;
+mod exec_post_hook;
+mod btrfs_snapshot_hook_nolinux;
+mod btrfs_snapshot_hook;
 
 

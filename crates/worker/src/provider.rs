@@ -3,33 +3,40 @@ use std::path::PathBuf;
 use crate::config::{ProviderEnum, MirrorConfig, Config};
 use crate::common;
 use crate::cgroup::CGroupHook;
-use crate::zfs_hook::ZfsHook;
+// use crate::zfs_hook::ZfsHook;
 use crate::hooks::JobHook;
 use crate::context::Context;
-use crate::docker::DockerHook;
+// use crate::docker::DockerHook;
 use std::sync::mpsc;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use regex::Regex;
 use log::warn;
-
+use tera::Tera;
+use crate::cmd_provider::CmdConfig;
+use crate::docker::DockerHook;
+use crate::rsync_provider::RsyncConfig;
+use crate::two_stage_rsync_provider::TwoStageRsyncConfig;
+use crate::zfs_hook::ZfsHook;
 // mirror provider是mirror job的包装器
 
-const _WORKING_DIR_KEY: &str = "working_dir";
-const _LOG_DIR_KEY: &str = "log_dir";
-const _LOG_FILE_KEY: &str = "log_file";
+pub(crate) const _WORKING_DIR_KEY: &str = "working_dir";
+pub(crate) const _LOG_DIR_KEY: &str = "log_dir";
+pub(crate) const _LOG_FILE_KEY: &str = "log_file";
 
 
 // MirrorProvider trait
 pub trait MirrorProvider: /*Clone+Sized*/{
+    type ContextStoreVal: Clone;  // 定义关联类型 T
+
     // name
     fn name(&self) -> String;
     fn upstream(&self) -> String;
     fn r#type(&self) -> ProviderEnum;
 
     // 开始后等待
-    fn run(&self, started: mpsc::Sender<common::Empty>) -> Result<(), Box<dyn Error>>;
+    fn run(&mut self, started: mpsc::Sender<common::Empty>) -> Result<(), Box<dyn Error>>;
     // job开始
-    fn start(&self) -> Result<(), Box<dyn Error>>;
+    fn start(&mut self) -> Result<(), Box<dyn Error>>;
     // 等待job结束
     fn wait(&self) -> Result<(), Box<dyn Error>>;
     // 终止mirror job
@@ -37,18 +44,18 @@ pub trait MirrorProvider: /*Clone+Sized*/{
     // job hooks
     fn is_running(&self) -> bool;
     // Cgroup
-    fn c_group(&self) -> Option<CGroupHook>;
+    fn c_group(&self) -> Option<&CGroupHook<Self::ContextStoreVal>>;
     // ZFS
-    // fn zfs(&self) -> ZfsHook;
+    fn zfs(&self) -> Option<ZfsHook<Self::ContextStoreVal>>;
     // docker
-    fn docker(&self) -> Option<DockerHook<Self>> where Self: Sized;
+    fn docker(&self) -> Option<&DockerHook<Self::ContextStoreVal>>;
 
     fn add_hook(&self, hook: Box<dyn JobHook>);
     fn hooks(&self) -> Vec<Box<dyn JobHook>>;
 
-    fn interval(&self)-> DateTime<Utc>;
+    fn interval(&self)-> Duration;
     fn retry(&self) -> u64;
-    fn timeout(&self) -> DateTime<Utc>;
+    fn timeout(&self) -> Duration;
 
     fn working_dir(&self) -> String;
     fn log_dir(&self) -> String;
@@ -56,81 +63,151 @@ pub trait MirrorProvider: /*Clone+Sized*/{
     fn is_master(&self) -> bool;
     fn data_size(&self) -> String;
 
-    // // enter context
-    // fn enter_context<T: Clone>(&self) -> Context<T>;
-    // // exit context
-    // fn exit_context<T: Clone>(&self) -> Context<T>;
-    // // return context
-    // fn context<T: Clone>(&self) -> Context<T>;
+    // enter context
+    fn enter_context(&self) -> &mut Context<Self::ContextStoreVal>;
+    // exit context
+    fn exit_context(&self) -> Result<Context<Self::ContextStoreVal>, Box<dyn Error>>;
+    // return context
+    fn context(&self) -> Context<Self::ContextStoreVal>;
 }
 
+// new_mirror_provider使用一个MirrorConfig和全局的Config创建一个MirrorProvider实例
+fn new_mirror_provider<T>(mirror: &mut MirrorConfig, cfg: &Config) -> Box<dyn MirrorProvider<ContextStoreVal = T>>
+{
+    // 使用m中的name字段匹配log_dir中的占位符
+    let format_log_dir = |log_dir: String, m: &MirrorConfig|-> String{
+        let mut tera = Tera::default(); // 创建一个空的模板引擎
+        let mut context = tera::Context::new();
+        context.insert("name", &m.name); // 将结构体中的值插入模板上下文
 
-// fn new_mirror_provider<T>(mirror: &mut MirrorConfig, cfg: &Config) -> T 
-// where T: MirrorProvider
-// {
-//     let format_log_dir = |log_dir: String, m: &MirrorConfig|-> String{
-//         // 使用正则替换模板中的占位符
-//         let re = Regex::new(r"\{\{\.Name}}").unwrap(); // 匹配 {{.Name}}
-// 
-//         // 使用正则替换 name 为 MirrorConfig 中的 name
-//         let formatted_log_dir = re.replace_all(&*log_dir, m.name.clone().unwrap());
-// 
-//         // 返回替换后的字符串
-//         formatted_log_dir.to_string()
-//     };
-//     let log_dir = mirror.log_dir.clone()
-//         .unwrap_or_else(|| cfg.global.log_dir.clone()
-//             .unwrap_or_else(|| "".to_string()));
-//     let mirror_dir = mirror.mirror_dir.clone().unwrap_or_else(|| 
-//         PathBuf::new()
-//             .join(cfg.global.mirror_dir.clone().unwrap_or_else(|| "".to_string()))
-//             .join(mirror.mirror_sub_dir.clone().unwrap_or_else(|| "".to_string()))
-//             .join(mirror.name.clone().unwrap_or_else(|| "".to_string()))
-//             .display().to_string());
-// 
-//     mirror.interval = match mirror.interval{
-//         None => cfg.global.interval.clone(),
-//         Some(0) => cfg.global.interval.clone(),
-//         Some(other) => Some(other),
-//     };
-// 
-//     mirror.retry = match mirror.retry{
-//         None => cfg.global.retry.clone(),
-//         Some(0) => cfg.global.retry.clone(),
-//         Some(other) => Some(other),
-//     };
-// 
-//     mirror.timeout = match mirror.timeout{
-//         None => cfg.global.timeout.clone(),
-//         Some(0) => cfg.global.timeout.clone(),
-//         Some(other) => Some(other),
-//     };
-//     
-//     let log_dir = format_log_dir(log_dir, mirror);
-//     
-//     //is master
-//     let mut is_master = true;
-//     match &mirror.role{
-//         Some(slave) if slave.eq("slave") => is_master = false,
-//         Some(other) if !other.eq("master") =>  {
-//             warn!("{} 的role配置无效", mirror.name.clone().unwrap())
-//         },
-//         _ => {},
-//     }
-//     
-//     match &mirror.provider{
-//         Some(provider) if provider.eq(&ProviderEnum::Command) => {},
-//         Some(provider) if provider.eq(&ProviderEnum::Rsync) => {},
-//         Some(provider) if provider.eq(&ProviderEnum::TwoStageRsync) => {},
-//         _ => {panic!("mirror的provider字段无效")}
-//     }
-//     
-//     // add logging hook
-//     
-//     
-//     
-//     
-//     
-//     
-//     unimplemented!()
-// }
+        let formatted = tera
+            .render_str(&*log_dir, &context) // 渲染模板
+            .unwrap_or_else(|_| panic!("渲染模板失败"));
+
+        formatted
+    };
+
+    let log_dir = mirror.log_dir.clone()
+        .unwrap_or( cfg.global.log_dir.clone()
+            .unwrap_or_default());
+    let mirror_dir = mirror.mirror_dir.clone().unwrap_or_else(||
+        PathBuf::new()
+            .join(cfg.global.mirror_dir.clone().unwrap_or_default())
+            .join(mirror.mirror_sub_dir.clone().unwrap_or_default())
+            .join(mirror.name.clone().unwrap_or_default())
+            .display().to_string());
+
+    mirror.interval = match mirror.interval{
+        Some(0) => cfg.global.interval.clone(),
+        None => None,
+        Some(other) => Some(other),
+    };
+
+    mirror.retry = match mirror.retry{
+        Some(0) => cfg.global.retry.clone(),
+        None => None,
+        Some(other) => Some(other),
+    };
+
+    mirror.timeout = match mirror.timeout{
+        Some(0) => cfg.global.timeout.clone(),
+        None => None,
+        Some(other) => Some(other),
+    };
+
+    let log_dir = format_log_dir(log_dir, mirror);
+
+    //is master
+    let mut is_master = true;
+    match &mirror.role{
+        Some(slave) if slave.eq("slave") => is_master = false,
+        Some(other) if !other.eq("master") =>  {
+            warn!("{} 的role配置无效", mirror.name.clone().unwrap())
+        },
+        _ => {},
+    }
+
+    let provider: Box<dyn MirrorProvider<ContextStoreVal=T>>;
+    
+    match &mirror.provider{
+        Some(provider) if provider.eq(&ProviderEnum::Command) => {
+            let pc = CmdConfig{
+                name: mirror.name.clone().unwrap_or_default(),
+                upstream_url: mirror.upstream.clone().unwrap_or_default(),
+                command: mirror.command.clone().unwrap_or_default(),
+                working_dir: mirror_dir,
+                fail_on_match: mirror.fail_on_match.clone().unwrap_or_default(),
+                size_pattern: mirror.size_pattern.clone().unwrap_or_default(),
+                log_dir: log_dir.clone(),
+                log_file: PathBuf::new().join(log_dir).join("latest.log").display().to_string(),
+                interval: Duration::minutes(mirror.interval.unwrap_or_default()),
+                retry: mirror.retry.unwrap_or_default(),
+                timeout: Duration::seconds(mirror.timeout.unwrap_or_default()),
+                env: mirror.env.clone().unwrap_or_default(),
+            };
+
+
+        },
+        Some(provider) if provider.eq(&ProviderEnum::Rsync) => {
+            let rc = RsyncConfig{
+                name: mirror.name.clone().unwrap_or_default(),
+                upstream_url: mirror.upstream.clone().unwrap_or_default(),
+                rsync_cmd: mirror.command.clone().unwrap_or_default(),
+                username: mirror.username.clone().unwrap_or_default(),
+                password: mirror.password.clone().unwrap_or_default(),
+                exclude_file: mirror.exclude_file.clone().unwrap_or_default(),
+                extra_options: mirror.rsync_options.clone().unwrap_or_default(),
+                rsync_never_timeout: mirror.rsync_no_timeo.unwrap_or_default(),
+                rsync_timeout_value: mirror.rsync_timeout.clone().unwrap_or_default(),
+                overridden_options: mirror.rsync_override.clone().unwrap_or_default(),
+                rsync_env: mirror.env.clone().unwrap_or_default(),
+                working_dir: mirror_dir,
+                log_dir: log_dir.clone(),
+                log_file: PathBuf::new().join(log_dir).join("latest.log").display().to_string(),
+                use_ipv4: mirror.use_ipv4.unwrap(),
+                use_ipv6: mirror.use_ipv6.unwrap(),
+                interval: Duration::minutes(mirror.interval.unwrap_or_default()),
+                retry: mirror.retry.unwrap_or_default(),
+                timeout: Duration::seconds(mirror.timeout.unwrap()),
+            };
+
+
+
+        },
+        Some(provider) if provider.eq(&ProviderEnum::TwoStageRsync) => {
+            let rc = TwoStageRsyncConfig{
+                name: mirror.name.clone().unwrap_or_default(),
+                stage1_profile: mirror.stage1_profile.clone().unwrap_or_default(),
+                upstream_url: mirror.upstream.clone().unwrap_or_default(),
+                rsync_cmd: mirror.command.clone().unwrap_or_default(),
+                username: mirror.username.clone().unwrap_or_default(),
+                password: mirror.password.clone().unwrap_or_default(),
+                exclude_file: mirror.exclude_file.clone().unwrap_or_default(),
+                extra_options: mirror.rsync_options.clone().unwrap_or_default(),
+                rsync_never_timeout: mirror.rsync_no_timeo.unwrap(),
+                rsync_timeout_value: mirror.rsync_timeout.unwrap(),
+                rsync_env: mirror.env.clone().unwrap_or_default(),
+                working_dir: mirror_dir,
+                log_dir: log_dir.clone(),
+                log_file: PathBuf::new().join(log_dir).join("latest.log").display().to_string(),
+                use_ipv4: mirror.use_ipv4.unwrap(),
+                use_ipv6: mirror.use_ipv6.unwrap(),
+                interval: Duration::minutes(mirror.interval.unwrap()),
+                retry: mirror.retry.unwrap(),
+                timeout: Duration::seconds(mirror.timeout.unwrap()),
+            };
+
+
+        },
+        _ => {panic!("mirror的provider字段无效")}
+    }
+
+    // add logging hook
+    // provider.add_hook()
+
+
+
+
+
+    unimplemented!()
+}

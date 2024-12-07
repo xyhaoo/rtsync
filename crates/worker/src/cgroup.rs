@@ -6,17 +6,18 @@ use std::os::unix::io::FromRawFd;
 use std::os::unix::process::CommandExt;
 use std::ffi::CString;
 
-use crate::hooks::EmptyHook;
+use crate::hooks::{EmptyHook, JobHook};
 use crate::config::{CGroupConfig, MemBytes};
 
 
 use std::{fs, io::{ Write}, path::Path};
+use std::error::Error;
 use log::{debug, info, log, trace};
-use cgroups_rs::hierarchies;
+// use cgroups_rs::hierarchies;
 
 
-pub struct CGroupHook{
-    empty_hook: EmptyHook,
+pub struct CGroupHook<T: Clone>{
+    empty_hook: EmptyHook<T>,
     cg_cfg: CGroupConfig,
     mem_limit: MemBytes,
     // cg_mgr_v1: cgroups_rs::Cgroup,
@@ -109,65 +110,65 @@ fn get_self_cgroup_path() -> Result<String, io::Error> {
 }
 
 impl CGroupConfig{
-    fn init_cgroup(&mut self) -> io::Result<()> {
-        let os = env::consts::OS;
-        if os != "linux" {
-            panic!("Only linux is supported");
-        }
-        
-        debug!("初始化cgroup");
-
-        // 如果 base_group 为空，表示使用当前进程的 cgroup，否则指定一个绝对路径
-        let mut base_group = self.group.clone();
-        if let Some(group) = base_group{
-            if !group.is_empty(){
-                base_group = Some(format!("/{}", group)); // Ensure absolute path
-            }else { 
-                base_group = None;
-            }
-        }
-        
-        // 检查现在是v1还是v2，is_unified为true表示v2
-        let is_unified = hierarchies::is_cgroup2_unified_mode();
-        self.is_unified = Some(is_unified); // You can check cgroup mode here
-        
-        // v2的处理
-        if is_unified {
-            debug!("监测到Cgroup V2");
-            let mut group_path = base_group.clone();
-            if group_path.is_none() {
-                debug!("检测我的cgroup路径");
-                match get_self_cgroup_path() {
-                    Ok(cgroup_path) => {
-                        group_path = Some(cgroup_path);
-                    }
-                    Err(e) => {
-                        return Err(e);
-                    }
-                }
-            }
-            info!("使用cgroup路径：{}", group_path.unwrap());
-            
-            let group_path = if base_group.is_empty() {
-                self.detect_cgroup_path()?
-            } else {
-                base_group
-            };
-            println!("Using cgroup path: {}", group_path);
-            self.cg_mgr_v2 = Some(group_path);
-        } else {
-            println!("Cgroup V1 detected");
-            let group_path = if base_group.is_empty() {
-                "/sys/fs/cgroup" // Default path
-            } else {
-                &base_group
-            };
-            self.cg_mgr_v1 = Some(group_path.to_string());
-        }
-
-        // Further logic for creating subgroups and moving processes (simplified)
-        self.create_and_move_processes()
-    }
+    // fn init_cgroup(&mut self) -> io::Result<()> {
+    //     let os = env::consts::OS;
+    //     if os != "linux" {
+    //         panic!("Only linux is supported");
+    //     }
+    //     
+    //     debug!("初始化cgroup");
+    // 
+    //     // 如果 base_group 为空，表示使用当前进程的 cgroup，否则指定一个绝对路径
+    //     let mut base_group = self.group.clone();
+    //     if let Some(group) = base_group{
+    //         if !group.is_empty(){
+    //             base_group = Some(format!("/{}", group)); // Ensure absolute path
+    //         }else { 
+    //             base_group = None;
+    //         }
+    //     }
+    //     
+    //     // 检查现在是v1还是v2，is_unified为true表示v2
+    //     let is_unified = hierarchies::is_cgroup2_unified_mode();
+    //     self.is_unified = Some(is_unified); // You can check cgroup mode here
+    //     
+    //     // v2的处理
+    //     if is_unified {
+    //         debug!("监测到Cgroup V2");
+    //         let mut group_path = base_group.clone();
+    //         if group_path.is_none() {
+    //             debug!("检测我的cgroup路径");
+    //             match get_self_cgroup_path() {
+    //                 Ok(cgroup_path) => {
+    //                     group_path = Some(cgroup_path);
+    //                 }
+    //                 Err(e) => {
+    //                     return Err(e);
+    //                 }
+    //             }
+    //         }
+    //         info!("使用cgroup路径：{}", group_path.unwrap());
+    //         
+    //         let group_path = if base_group.is_empty() {
+    //             self.detect_cgroup_path()?
+    //         } else {
+    //             base_group
+    //         };
+    //         println!("Using cgroup path: {}", group_path);
+    //         self.cg_mgr_v2 = Some(group_path);
+    //     } else {
+    //         println!("Cgroup V1 detected");
+    //         let group_path = if base_group.is_empty() {
+    //             "/sys/fs/cgroup" // Default path
+    //         } else {
+    //             &base_group
+    //         };
+    //         self.cg_mgr_v1 = Some(group_path.to_string());
+    //     }
+    // 
+    //     // Further logic for creating subgroups and moving processes (simplified)
+    //     self.create_and_move_processes()
+    // }
 
     fn detect_cgroup_path(&self) -> io::Result<String> {
         // Simulate detection of the current cgroup path for the process
@@ -184,6 +185,15 @@ impl CGroupConfig{
         }
 
         Ok(())
+    }
+}
+
+impl<T: Clone> JobHook for CGroupHook<T>  {
+    fn pre_exec(&self) -> Result<(), Box<dyn Error>> {
+        todo!()
+    }
+    fn post_exec(&self) -> Result<(), Box<dyn Error>> {
+        todo!()
     }
 }
 

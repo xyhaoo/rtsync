@@ -176,7 +176,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 use lazy_static::lazy_static;
-
+use rocket::data::N;
 
 lazy_static! {
     static ref  rsync_exit_values: HashMap<i32, &'static str> = [
@@ -334,20 +334,18 @@ fn extract_size_from_log(log_file: &str, re: &Regex) -> Option<String> {
 }
 
 // Extract size specifically from rsync log
-fn extract_size_from_rsync_log(log_file: &str) -> Option<String> {
+pub fn extract_size_from_rsync_log(log_file: &str) -> Option<String> {
     let re = Regex::new(r"(?m)^Total file size: ([0-9.]+[KMGTP]?) bytes").unwrap();
     extract_size_from_log(log_file, &re)
 }
 
 // Test rsync command error handling
-fn translate_rsync_error_code(cmd_err: std::process::Output) {
-    let exit_code = cmd_err.status.code().unwrap_or(-1);
-    
+pub fn translate_rsync_error_code(exit_code: i32) -> Option<String>{
     if let Some(msg) = rsync_exit_values.get(&exit_code) {
         eprintln!("rsync error: {}", msg);
-    } else {
-        eprintln!("Unknown rsync error code: {}", exit_code);
+        Some(msg.to_string());
     }
+    None
 }
 
 

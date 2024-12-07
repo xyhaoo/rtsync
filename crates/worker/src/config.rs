@@ -35,7 +35,7 @@ where
 //Config代表worker配置选项
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
-pub struct Config {
+pub(crate) struct Config {
     pub(crate) global: GlobalConfig,
     manager: ManagerConfig,
     server: ServerConfig,
@@ -50,14 +50,14 @@ pub struct Config {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
-struct GlobalConfig {
+pub(crate) struct GlobalConfig {
     name: Option<String>,
     pub(crate) log_dir: Option<String>,
     pub(crate) mirror_dir: Option<String>,
     concurrent: Option<u64>,
-    pub(crate) interval: Option<u64>,
-    pub(crate) retry: Option<u64>,
-    pub(crate) timeout: Option<u64>,
+    pub(crate) interval: Option<i64>,
+    pub(crate) retry: Option<i64>,
+    pub(crate) timeout: Option<i64>,
 
     exec_on_success: Option<Vec<String>>,
     exec_on_failure: Option<Vec<String>>,
@@ -224,9 +224,9 @@ pub(crate) struct MirrorConfig {
     #[serde(deserialize_with = "deserialize_provider_enum")]
     pub(crate) provider: Option<ProviderEnum>,
     pub(crate) upstream: Option<String>,
-    pub(crate) interval: Option<u64>,
-    pub(crate) retry: Option<u64>,
-    pub(crate) timeout: Option<u64>,
+    pub(crate) interval: Option<i64>,
+    pub(crate) retry: Option<i64>,
+    pub(crate) timeout: Option<i64>,
     pub(crate) mirror_dir: Option<String>,
     #[serde(rename = "mirror_subdir")]
     pub(crate) mirror_sub_dir: Option<String>,
@@ -242,7 +242,7 @@ pub(crate) struct MirrorConfig {
     pub(crate) exec_on_success_extra: Option<Vec<String>>,
     pub(crate) exec_on_failure_extra: Option<Vec<String>>,
 
-    pub(crate) command: Option<Vec<String>>,
+    pub(crate) command: Option<String>,
     pub(crate) fail_on_match: Option<String>,
     pub(crate) size_pattern: Option<String>,
     pub(crate) use_ipv4: Option<bool>,
@@ -252,7 +252,7 @@ pub(crate) struct MirrorConfig {
     pub(crate) password: Option<String>,
     #[serde(rename = "rsync_no_timeout")]
     pub(crate) rsync_no_timeo: Option<bool>,
-    pub(crate) rsync_timeout: Option<i32>,
+    pub(crate) rsync_timeout: Option<i64>,
     pub(crate) rsync_options: Option<Vec<String>>,
     pub(crate) rsync_override: Option<Vec<String>>,
     pub(crate) stage1_profile: Option<String>,
