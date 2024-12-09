@@ -17,5 +17,8 @@ mod loglimit_hook;
 mod exec_post_hook;
 mod btrfs_snapshot_hook_nolinux;
 mod btrfs_snapshot_hook;
+mod job;
+mod worker;
+mod config_test;
 
 

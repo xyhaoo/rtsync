@@ -3,20 +3,21 @@ use std::path::PathBuf;
 use crate::config::{ProviderEnum, MirrorConfig, Config};
 use crate::common;
 use crate::cgroup::CGroupHook;
-// use crate::zfs_hook::ZfsHook;
 use crate::hooks::JobHook;
 use crate::context::Context;
-// use crate::docker::DockerHook;
-use std::sync::mpsc;
+// use std::sync::mpsc;
+use crossbeam_channel::{Sender, Receiver};
 use chrono::{DateTime, Duration, Utc};
 use regex::Regex;
 use log::warn;
 use tera::Tera;
-use crate::cmd_provider::CmdConfig;
+use crate::cmd_provider::{CmdConfig, CmdProvider};
 use crate::docker::DockerHook;
-use crate::rsync_provider::RsyncConfig;
-use crate::two_stage_rsync_provider::TwoStageRsyncConfig;
+use crate::rsync_provider::{RsyncConfig, RsyncProvider};
+use crate::two_stage_rsync_provider::{TwoStageRsyncConfig, TwoStageRsyncProvider};
 use crate::zfs_hook::ZfsHook;
+use crate::base_provider::HookType;
+use crate::loglimit_hook::LogLimiter;
 // mirror provider是mirror job的包装器
 
 pub(crate) const _WORKING_DIR_KEY: &str = "working_dir";
@@ -29,50 +30,50 @@ pub trait MirrorProvider: /*Clone+Sized*/{
     type ContextStoreVal: Clone;  // 定义关联类型 T
 
     // name
-    fn name(&self) -> String;
+    fn name(&self) -> String {"".to_string()}
     fn upstream(&self) -> String;
     fn r#type(&self) -> ProviderEnum;
 
     // 开始后等待
-    fn run(&mut self, started: mpsc::Sender<common::Empty>) -> Result<(), Box<dyn Error>>;
+    fn run(&mut self, started: Sender<common::Empty>) -> Result<(), Box<dyn Error>>;
     // job开始
-    fn start(&mut self) -> Result<(), Box<dyn Error>>;
+    fn start(&mut self) -> Result<(), Box<dyn Error>> {Ok(())}
     // 等待job结束
-    fn wait(&self) -> Result<(), Box<dyn Error>>;
+    fn wait(&self) -> Result<(), Box<dyn Error>> {Ok(())}
     // 终止mirror job
-    fn terminate(&self) -> Result<(), Box<dyn Error>>;
+    fn terminate(&self) -> Result<(), Box<dyn Error>> {Ok(())}
     // job hooks
-    fn is_running(&self) -> bool;
+    fn is_running(&self) -> bool {false}
     // Cgroup
-    fn c_group(&self) -> Option<&CGroupHook<Self::ContextStoreVal>>;
+    fn c_group(&self) -> Option<&CGroupHook> {None}
     // ZFS
-    fn zfs(&self) -> Option<ZfsHook<Self::ContextStoreVal>>;
+    fn zfs(&self) -> Option<ZfsHook> {None}
     // docker
-    fn docker(&self) -> Option<&DockerHook<Self::ContextStoreVal>>;
+    fn docker(&self) -> Option<&DockerHook> {None}
 
-    fn add_hook(&self, hook: Box<dyn JobHook>);
-    fn hooks(&self) -> Vec<Box<dyn JobHook>>;
+    fn add_hook(&mut self, hook: HookType);
+    fn hooks(&self) -> Vec<Box<dyn JobHook<ContextStoreVal=Self::ContextStoreVal>>> {Vec::new()}
 
-    fn interval(&self)-> Duration;
-    fn retry(&self) -> u64;
-    fn timeout(&self) -> Duration;
+    fn interval(&self)-> Duration {Duration::seconds(1)}
+    fn retry(&self) -> u64 {0}
+    fn timeout(&self) -> Duration {Duration::seconds(1)}
 
-    fn working_dir(&self) -> String;
-    fn log_dir(&self) -> String;
-    fn log_file(&self) -> String;
-    fn is_master(&self) -> bool;
+    fn working_dir(&self) -> String {String::new()}
+    fn log_dir(&self) -> String {String::new()}
+    fn log_file(&self) -> String {String::new()}
+    fn is_master(&self) -> bool {false}
     fn data_size(&self) -> String;
 
     // enter context
-    fn enter_context(&self) -> &mut Context<Self::ContextStoreVal>;
+    fn enter_context(&self) -> Option<&mut Context<Self::ContextStoreVal>> { None}
     // exit context
-    fn exit_context(&self) -> Result<Context<Self::ContextStoreVal>, Box<dyn Error>>;
+    fn exit_context(&self) -> Result<Context<Self::ContextStoreVal>, Box<dyn Error>> {Err("".into())}
     // return context
-    fn context(&self) -> Context<Self::ContextStoreVal>;
+    fn context(&self) -> Option<Context<Self::ContextStoreVal>> {None}
 }
 
 // new_mirror_provider使用一个MirrorConfig和全局的Config创建一个MirrorProvider实例
-fn new_mirror_provider<T>(mirror: &mut MirrorConfig, cfg: &Config) -> Box<dyn MirrorProvider<ContextStoreVal = T>>
+fn new_mirror_provider(mirror: &mut MirrorConfig, cfg: &Config) -> Box<dyn MirrorProvider<ContextStoreVal = String>>
 {
     // 使用m中的name字段匹配log_dir中的占位符
     let format_log_dir = |log_dir: String, m: &MirrorConfig|-> String{
@@ -127,10 +128,10 @@ fn new_mirror_provider<T>(mirror: &mut MirrorConfig, cfg: &Config) -> Box<dyn Mi
         _ => {},
     }
 
-    let provider: Box<dyn MirrorProvider<ContextStoreVal=T>>;
+    let mut provider: Box<dyn MirrorProvider<ContextStoreVal=String>>;
     
     match &mirror.provider{
-        Some(provider) if provider.eq(&ProviderEnum::Command) => {
+        Some(_provider) if _provider.eq(&ProviderEnum::Command) => {
             let pc = CmdConfig{
                 name: mirror.name.clone().unwrap_or_default(),
                 upstream_url: mirror.upstream.clone().unwrap_or_default(),
@@ -145,10 +146,17 @@ fn new_mirror_provider<T>(mirror: &mut MirrorConfig, cfg: &Config) -> Box<dyn Mi
                 timeout: Duration::seconds(mirror.timeout.unwrap_or_default()),
                 env: mirror.env.clone().unwrap_or_default(),
             };
-
-
+            match CmdProvider::new(pc) {
+                Ok(mut p) => {
+                    p.base_provider.is_master = is_master;
+                    provider = Box::new(p);
+                },
+                Err(e) => {
+                    panic!("{}", e);
+                }
+            }
         },
-        Some(provider) if provider.eq(&ProviderEnum::Rsync) => {
+        Some(_provider) if _provider.eq(&ProviderEnum::Rsync) => {
             let rc = RsyncConfig{
                 name: mirror.name.clone().unwrap_or_default(),
                 upstream_url: mirror.upstream.clone().unwrap_or_default(),
@@ -170,11 +178,17 @@ fn new_mirror_provider<T>(mirror: &mut MirrorConfig, cfg: &Config) -> Box<dyn Mi
                 retry: mirror.retry.unwrap_or_default(),
                 timeout: Duration::seconds(mirror.timeout.unwrap()),
             };
-
-
-
+            match RsyncProvider::new(rc) {
+                Ok(mut p) => {
+                    p.base_provider.is_master = is_master;
+                    provider = Box::new(p);
+                },
+                Err(e) => {
+                    panic!("{}", e);
+                }
+            }
         },
-        Some(provider) if provider.eq(&ProviderEnum::TwoStageRsync) => {
+        Some(_provider) if _provider.eq(&ProviderEnum::TwoStageRsync) => {
             let rc = TwoStageRsyncConfig{
                 name: mirror.name.clone().unwrap_or_default(),
                 stage1_profile: mirror.stage1_profile.clone().unwrap_or_default(),
@@ -196,14 +210,22 @@ fn new_mirror_provider<T>(mirror: &mut MirrorConfig, cfg: &Config) -> Box<dyn Mi
                 retry: mirror.retry.unwrap(),
                 timeout: Duration::seconds(mirror.timeout.unwrap()),
             };
-
+            match TwoStageRsyncProvider::new(rc) {
+                Ok(mut p) => {
+                    p.base_provider.is_master = is_master;
+                    provider = Box::new(p);
+                },
+                Err(e) => {
+                    panic!("{}", e);
+                }
+            }
 
         },
         _ => {panic!("mirror的provider字段无效")}
     }
 
     // add logging hook
-    // provider.add_hook()
+    provider.add_hook(HookType::LogLimiter(LogLimiter::new()));
 
 
 

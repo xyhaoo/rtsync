@@ -12,12 +12,14 @@ use crate::config::{CGroupConfig, MemBytes};
 
 use std::{fs, io::{ Write}, path::Path};
 use std::error::Error;
+use std::sync::{Arc, Mutex};
 use log::{debug, info, log, trace};
+use crate::context::Context;
 // use cgroups_rs::hierarchies;
 
 
-pub struct CGroupHook<T: Clone>{
-    empty_hook: EmptyHook<T>,
+pub struct CGroupHook{
+    // empty_hook: EmptyHook<T>,
     cg_cfg: CGroupConfig,
     mem_limit: MemBytes,
     // cg_mgr_v1: cgroups_rs::Cgroup,
@@ -188,11 +190,20 @@ impl CGroupConfig{
     }
 }
 
-impl<T: Clone> JobHook for CGroupHook<T>  {
-    fn pre_exec(&self) -> Result<(), Box<dyn Error>> {
+impl JobHook for CGroupHook  {
+    type ContextStoreVal = ();
+
+    fn pre_exec(&self,
+                _provider_name: String,
+                _log_dir: String,
+                _log_file: String,
+                _working_dir: String,
+                _context: &Arc<Mutex<Option<Context<Self::ContextStoreVal>>>>)
+        -> Result<(), Box<dyn Error>> 
+    {
         todo!()
     }
-    fn post_exec(&self) -> Result<(), Box<dyn Error>> {
+    fn post_exec(&self, context: &Arc<Mutex<Option<Context<Self::ContextStoreVal>>>>, provider_name: String) -> Result<(), Box<dyn Error>> {
         todo!()
     }
 }

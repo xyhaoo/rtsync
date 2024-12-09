@@ -3,8 +3,9 @@ use crate::hooks::{EmptyHook, JobHook};
 use crate::provider::MirrorProvider;
 use std::error::Error;
 use std::process::Command;
+use std::sync::{Arc, Mutex};
 use shlex::Shlex;
-
+use crate::context::Context;
 // hook在同步后执行命令
 // 通常设置时间戳等
 
@@ -13,57 +14,75 @@ pub(crate) enum ExecOn{
     Failure,
 }
 
-pub(crate) struct ExecPostHook<T: Clone> {
-    empty_hook: EmptyHook<T>,
+pub(crate) struct ExecPostHook {
     exec_on: ExecOn,
     command: Vec<String>,
 }
 
-fn new_exec_post_hook<T: Clone>(provider: Box<dyn MirrorProvider<ContextStoreVal=T>>, 
-                                exec_on: ExecOn, command: &str) 
-    -> Result<ExecPostHook<T>, Box<dyn Error>>
-{
-    let cmd: Vec<String> = Shlex::new(command).collect();
-    if cmd.len() == 0 { 
-        return Err("未检测到命令".into())
-    }
-    Ok(ExecPostHook{
-        empty_hook: EmptyHook{
-            provider,
-        },
-        exec_on,
-        command: cmd,
-    })
-}
-impl<T: Clone> JobHook for ExecPostHook<T>{
-    fn post_success(&self) -> Result<(), Box<dyn Error>> {
+impl JobHook for ExecPostHook{
+    type ContextStoreVal = ();
+
+    fn post_success(&self, provider_name: String,
+                    working_dir: String,
+                    upstream: String,
+                    log_dir: String,
+                    log_file: String) 
+        -> Result<(), Box<dyn Error>> 
+    {
         if let ExecOn::Success = self.exec_on{
-            return self.r#do()
+            return self.r#do(provider_name, working_dir, upstream, log_dir, log_file);
         }
         Ok(())
     }
-    fn post_fail(&self) -> Result<(), Box<dyn Error>> {
+    
+    fn post_fail(&self,
+                 provider_name: String,
+                 working_dir: String,
+                 upstream: String,
+                 log_dir: String,
+                 log_file: String, 
+                 _context: &Arc<Mutex<Option<Context<Self::ContextStoreVal>>>>) 
+        -> Result<(), Box<dyn Error>> 
+    {
         if let ExecOn::Failure = self.exec_on{
-            return self.r#do()
+            return self.r#do(provider_name, working_dir, upstream, log_dir, log_file)
         }
         Ok(())
     }
 } 
 
 
-impl<T: Clone> ExecPostHook<T> {
-    fn r#do(&self) -> Result<(), Box<dyn Error>>{
-        let p = self.empty_hook.provider.as_ref();
+impl ExecPostHook {
+    fn new(exec_on: ExecOn, command: &str) -> Result<ExecPostHook, Box<dyn Error>>
+    {
+        let cmd: Vec<String> = Shlex::new(command).collect();
+        if cmd.len() == 0 {
+            return Err("未检测到命令".into())
+        }
+        Ok(ExecPostHook{
+            exec_on,
+            command: cmd,
+        })
+    }
+    
+    fn r#do(&self, 
+            provider_name: String, 
+            working_dir: String, 
+            upstream: String, 
+            log_dir: String, 
+            log_file: String) 
+        -> Result<(), Box<dyn Error>>
+    {
         let exit_status = match self.exec_on {
             ExecOn::Success => "success",
             ExecOn::Failure => "failure",
         };
         let env: HashMap<&str, String> = [
-            ("RTSYNC_MIRROR_NAME", p.name()),
-            ("RTSYNC_WORKING_DIR", p.working_dir()),
-            ("RTSYNC_UPSTREAM_URL", p.upstream()),
-            ("RTSYNC_LOG_DIR", p.log_dir()),
-            ("RTSYNC_LOG_FILE", p.log_file()),
+            ("RTSYNC_MIRROR_NAME", provider_name),
+            ("RTSYNC_WORKING_DIR", working_dir),
+            ("RTSYNC_UPSTREAM_URL", upstream),
+            ("RTSYNC_LOG_DIR", log_dir),
+            ("RTSYNC_LOG_FILE", log_file),
             ("RTSYNC_JOB_EXIT_STATUS", exit_status.to_string())]
             .iter().cloned().collect();
         let mut args = Vec::new();

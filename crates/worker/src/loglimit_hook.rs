@@ -2,32 +2,39 @@ use std::error::Error;
 use std::{fs, io};
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use chrono::Utc;
 use log::debug;
+use crate::context::Context;
 use crate::hooks::{EmptyHook, JobHook};
 use crate::provider::{MirrorProvider, _LOG_FILE_KEY};
 
-pub(crate) struct LogLimiter<T: Clone>{
-    empty_hook: EmptyHook<T>,
-}
+pub(crate) struct LogLimiter{}
 
-fn new_log_limiter<T: Clone>(provider: Box<dyn MirrorProvider<ContextStoreVal=T>>) -> LogLimiter<T>{
-    LogLimiter{
-        empty_hook: EmptyHook{
-            provider
-        }
+impl LogLimiter {
+    pub(crate) fn new() -> Self {
+        LogLimiter{} 
     }
 }
 
-impl JobHook for LogLimiter<String>{
-    fn pre_exec(&self) -> Result<(), Box<dyn Error>> {
-        debug!("为 {} 执行日志限制器", self.empty_hook.provider.name());
+
+
+impl JobHook for LogLimiter{
+    type ContextStoreVal = String;
+
+    fn pre_exec(&self,
+                provider_name: String,
+                log_dir: String, 
+                log_file: String, 
+                working_dir: String, 
+                context: &Arc<Mutex<Option<Context<Self::ContextStoreVal>>>>) 
+        -> Result<(), Box<dyn Error>> 
+    {
+        debug!("为 {} 执行日志限制器", provider_name);
         
-        let p = self.empty_hook.provider.as_ref();
-        if p.log_file().eq("/dev/null"){
+        if log_file.eq("/dev/null"){
             return Ok(());
         }
-        let log_dir = p.log_dir();
         
         // 找到log_dir下的log文件，只保留最新的10个
         let path = Path::new(&log_dir);
@@ -49,7 +56,7 @@ impl JobHook for LogLimiter<String>{
                     let entry = entry?;
                     let file_name = entry.file_name();
                     // 使用to_string_lossy()处理合法字符
-                    if file_name.to_string_lossy().starts_with(p.name().as_str()) {
+                    if file_name.to_string_lossy().starts_with(provider_name.as_str()) {
                         matched_files.push(entry);
                     }
                 }
@@ -69,7 +76,7 @@ impl JobHook for LogLimiter<String>{
 
             }
         }
-        let log_file_name = format!("{}_{}.log", p.name(), Utc::now().format("%Y-%m-%d_%H_%M"));
+        let log_file_name = format!("{}_{}.log", provider_name, Utc::now().format("%Y-%m-%d_%H_%M"));
         let log_file_path = Path::new(&log_dir).join(&log_file_name);
         let log_link = Path::new(&log_dir).join("latest");
         // 如果符号链接存在，删除它
@@ -78,19 +85,44 @@ impl JobHook for LogLimiter<String>{
         }
         // 创建新的符号链接
         symlink(&log_file_name, &log_link)?;
+
+        let mut cur_ctx = context.lock().unwrap();
+        if let Some(ctx) = cur_ctx.as_mut(){
+            ctx.set(_LOG_FILE_KEY.to_string(), log_file_path.display().to_string());
+        }
+        Ok(())
+    }
+    
+    fn post_exec(&self, 
+                 context: &Arc<Mutex<Option<Context<Self::ContextStoreVal>>>>,
+                 _provider_name: String) 
+        -> Result<(), Box<dyn Error>> 
+    {
+        let mut cur_ctx = context.lock().unwrap();
+        *cur_ctx = match cur_ctx.to_owned(){
+            Some(ctx) => {
+                match ctx.exit() {
+                    Ok(ctx) => Some(ctx),
+                    Err(_) => None,
+                }
+            },
+            None => None,
+        };
+        Ok(())
+    }
+    
+    fn post_fail(&self,
+                 _provider_name: String,
+                 _working_dir: String,
+                 _upstream: String,
+                 log_dir: String,
+                 log_file: String,
+                 context: &Arc<Mutex<Option<Context<Self::ContextStoreVal>>>>)
+        -> Result<(), Box<dyn Error>> 
+    {
         
-        let ctx = p.enter_context();
-        ctx.set(_LOG_FILE_KEY.to_string(), log_file_path.display().to_string());
-        Ok(())
-    }
-    fn post_exec(&self) -> Result<(), Box<dyn Error>> {
-        self.empty_hook.provider.exit_context()?;
-        Ok(())
-    }
-    fn post_fail(&self) -> Result<(), Box<dyn Error>> {
-        let log_file = self.empty_hook.provider.log_file();
         let log_file_fail = format!("{log_file}.fail");
-        let log_dir = self.empty_hook.provider.log_dir();
+        
         let log_link = Path::new(&log_dir).join("latest");
         fs::rename(&log_file, &log_file_fail)?;
         fs::remove_file(&log_link)?;
@@ -98,8 +130,17 @@ impl JobHook for LogLimiter<String>{
             .file_name().unwrap()
             .to_string_lossy().to_string();
         symlink(&log_file_name, log_link)?;
-        
-        self.empty_hook.provider.exit_context()?;
+
+        let mut cur_ctx = context.lock().unwrap();
+        *cur_ctx = match cur_ctx.to_owned(){
+            Some(ctx) => {
+                match ctx.exit() {
+                    Ok(ctx) => Some(ctx),
+                    Err(_) => None,
+                }
+            },
+            None => None,
+        };
         Ok(())
     }
     

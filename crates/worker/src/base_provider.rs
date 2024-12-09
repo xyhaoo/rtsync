@@ -1,100 +1,130 @@
 use std::error::Error;
 use std::fs::{File, OpenOptions};
-use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::{Arc, Mutex, RwLock};
 use std::sync::atomic::{AtomicBool, Ordering};
 use chrono::{DateTime, Duration, Utc};
-use log::{debug, error, log, warn};
+use log::{debug, error, info, log, warn};
+use users::get_current_uid;
 use crate::cgroup::CGroupHook;
 use crate::context::Context;
 use crate::docker::DockerHook;
-use crate::hooks::JobHook;
+use crate::hooks::{EmptyHook, JobHook};
 use crate::provider::{_LOG_DIR_KEY, _LOG_FILE_KEY, _WORKING_DIR_KEY};
 use crate::runner::CmdJob;
 use crate::zfs_hook::ZfsHook;
+#[cfg(target_os = "linux")]
+use crate::btrfs_snapshot_hook::BtrfsSnapshotHook;
+use crate::btrfs_snapshot_hook_nolinux;
+use crate::config::{DockerConfig, MirrorConfig};
+use crate::exec_post_hook::ExecPostHook;
+use crate::loglimit_hook::LogLimiter;
 
-
-enum HookType<T: Clone>{
-    Cgroup(CGroupHook<T>),
-    Zfs(ZfsHook<T>),
-    Docker(DockerHook<T>),
+pub(crate) enum HookType{
+    #[cfg(target_os = "linux")]
+    Btrfs(btrfs_snapshot_hook::BtrfsSnapshotHook),
+    BtrfsNoLinux(btrfs_snapshot_hook_nolinux::BtrfsSnapshotHook),
+    Cgroup(CGroupHook),
+    Docker(DockerHook),
+    Empty(EmptyHook),
+    ExecPost(ExecPostHook),
+    LogLimiter(LogLimiter),
+    Zfs(ZfsHook),
+    
 }
 
 // baseProvider是providers的基本混合
 // mutex
 #[derive(Default)]
 pub(crate) struct BaseProvider<T: Clone> {
-    pub(crate) ctx: Option<Context<T>> ,
+    pub(crate) ctx: Arc<Mutex<Option<Context<T>>>> ,
     pub(crate) name: String,
     pub(crate) interval: Duration,
     pub(crate) retry: i64,
     pub(crate) timeout: Duration,
     pub(crate) is_master: bool,
 
-    pub(crate) cmd: Option<Arc<RwLock<CmdJob<T>>>>,
+    pub(crate) cmd: Option<Arc<RwLock<CmdJob>>>,
     pub(crate) log_file_fd: Option<File>,
     pub(crate) is_running: Option<Arc<AtomicBool>>,
 
-    pub(crate) cgroup: Option<CGroupHook<T>>,
-    pub(crate) zfs: Option<ZfsHook<T>>,
-    pub(crate) docker: Option<DockerHook<T>>,
+    pub(crate) cgroup: Option<CGroupHook>,
+    pub(crate) zfs: Option<ZfsHook>,
+    pub(crate) docker: Option<DockerHook>,
 
-    pub(crate) hooks: Vec<Box<dyn JobHook>>
+    pub(crate) hooks: Vec<Box<dyn JobHook<ContextStoreVal=T>>>
 }
 impl<T: Clone> BaseProvider<T> {
-    fn name(&self) -> &str {
+    pub(crate) fn name(&self) -> &str {
         &self.name
     }
-    fn enter_context(&mut self) -> Option<&Context<T>> {
-        if let Some(ctx) = self.ctx.as_mut(){
-            self.ctx = Some(ctx.enter());
-            return self.ctx.as_ref();
-        }
-        None
-    }
-    fn exit_context(&mut self) -> Option<&Context<T>> {
-        if let Some(cur_ctx) = self.ctx.as_mut(){
-            if let Ok(ctx) = cur_ctx.to_owned().exit(){
-                self.ctx = Some(ctx);
-                return self.ctx.as_ref();
-            }else {
-                self.ctx = None;
-            }
-        }
-        None
-    }
-    fn context(&self) -> Option<&Context<T>> {
+    
+    // fn enter_context(&mut self) -> &Mutex<Option<Context<T>>> {
+    //     let mut cur_ctx = self.ctx.lock().unwrap();
+    //     *cur_ctx = match cur_ctx.to_owned() {
+    //         Some(ctx) => Some(ctx.enter()),
+    //         None => None,
+    //     };
+    //     
+    //     self.ctx.as_ref()
+    // }
+    
+    // fn exit_context(&mut self) -> Option<&Context<T>> {
+    //     if let Some(cur_ctx) = self.context_mut(){
+    //         if let Ok(ctx) = cur_ctx.to_owned().exit(){
+    //             self.ctx = Some(ctx);
+    //             return self.ctx.as_ref();
+    //         }else {
+    //             self.ctx = None;
+    //         }
+    //     }
+    //     None
+    // }
+    
+    fn context(&self) -> &Mutex<Option<Context<T>>> {
         self.ctx.as_ref()
     }
+    
+    
     fn interval(&self) -> Duration {
         self.interval.clone()
     }
+    
     fn retry(&self) -> i64 {
         self.retry
     }
+    
     fn timeout(&self) -> Duration {
         self.timeout.clone()
     }
+    
     fn is_master(&self) -> bool {
         self.is_master
     }
-    fn add_hook(&mut self, hook: HookType<T>) {
+    
+    pub(crate) fn add_hook(&mut self, hook: HookType) {
         match hook {
             HookType::Cgroup(cgroup) => {self.cgroup = Some(cgroup);},
             HookType::Zfs(zfs) => {self.zfs = Some(zfs);},
             HookType::Docker(docker) => {self.docker = Some(docker);},
+            _ => {}
         }
     }
-    fn hooks(&self) -> &Vec<Box<dyn JobHook>>{
+    
+    fn hooks(&self) -> &Vec<Box<dyn JobHook<ContextStoreVal=T>>>{
         self.hooks.as_ref()
     }
-    fn cgroup(&self) -> &Option<CGroupHook<T>> {
+    
+    fn cgroup_ref(&self) -> &Option<CGroupHook> {
         &self.cgroup
     }
-    fn zfs(&self) -> &Option<ZfsHook<T>>{
+    
+    fn zfs_ref(&self) -> &Option<ZfsHook>{
         &self.zfs
     }
-    fn docker(&self) -> &Option<DockerHook<T>>{
+    
+    fn docker_ref(&self) -> &Option<DockerHook>{
         &self.docker
     }
 
@@ -106,14 +136,16 @@ impl<T: Clone> BaseProvider<T> {
     fn run(&mut self) -> Result<(), Box<dyn Error>>{
         panic!("还未实现")
     }
+    
     fn start(&mut self) -> Result<(), Box<dyn Error>>{
         panic!("还未实现")
     }
 
-    fn is_running(&self) -> bool {
+    pub(crate) fn is_running(&self) -> bool {
         self.is_running.as_ref().expect("没有is_running字段")
             .load(Ordering::SeqCst)
     }
+    
     pub(crate) fn wait(&mut self) -> Result<i32, Box<dyn Error>>{
         debug!("调用了wait函数，调用者：{}", self.name());
         debug!("将is_running字段设置为false，调用者：{}", self.name());
@@ -123,30 +155,37 @@ impl<T: Clone> BaseProvider<T> {
         self.cmd.as_ref().expect("没有cmd字段")
             .write().expect("无法在BaseProvider的cmd字段上获得锁")
             .wait()
-        
+
     }
-    fn terminate(&mut self) -> Result<(), Box<dyn Error>>{
-        if let Ok(mut cmd) = self.cmd.as_ref().expect("没有cmd字段").write(){
-            debug!("正在终止provider：{}", self.name());
-            if !self.is_running(){
-                warn!("调用了终止函数，但是此时没有检测到 {} 正在运行", self.name());
-                return Ok(())
-            }
-            cmd.terminate()
-        }else { 
-            panic!("在调用terminate时，无法在BaseProvider的cmd字段上获得锁")
-        }
-    }
+    
     fn data_size(&self) -> String{
         "".to_string()
     }
 
+    // 初始化zfs字段
+    fn zfs(&mut self, z_pool: String){
+        self.zfs = Some(ZfsHook::new(z_pool));
+    }
+
+    // 初始化docker字段
+    fn docker(&mut self, g_cfg: DockerConfig, m_cfg: MirrorConfig){
+        self.docker = Some(DockerHook::new(g_cfg, m_cfg));
+    }
+    
+    // 初始化hooks字段
+    #[cfg(target_os = "linux")]
+    fn btrfs_snapshot(&mut self, snapshot_path: &str, mirror: MirrorConfig){
+        let btrfs_snapshot = BtrfsSnapshotHook::new(self.name(), snapshot_path, mirror);
+        // self.hooks.push(Box::<T>::new(btrfs_snapshot.into()));
+    }
+    
+    
 }
 
 
 impl BaseProvider<String> {
-    fn working_dir(&self) -> String {
-        if let Some(ctx) = self.ctx.as_ref() {
+    pub(crate) fn working_dir(&self) -> String {
+        if let Some(ctx) = self.ctx.lock().unwrap().as_ref() {
             if let Some(v) = ctx.get(_WORKING_DIR_KEY){
                 v
             }else {
@@ -156,8 +195,8 @@ impl BaseProvider<String> {
             panic!("没有ctx字段")
         }
     }
-    fn log_dir(&self) -> String {
-        if let Some(ctx) = self.ctx.as_ref() {
+    pub(crate) fn log_dir(&self) -> String {
+        if let Some(ctx) = self.ctx.lock().unwrap().as_ref() {
             if let Some(v) = ctx.get(_LOG_DIR_KEY){
                 v
             }else {
@@ -167,8 +206,8 @@ impl BaseProvider<String> {
             panic!("没有ctx字段")
         }
     }
-    fn log_file(&self) -> String {
-        if let Some(ctx) = self.ctx.as_ref() {
+    pub(crate) fn log_file(&self) -> String {
+        if let Some(ctx) = self.ctx.lock().unwrap().as_ref() {
             if let Some(v) = ctx.get(_LOG_FILE_KEY){
                 v
             }else {
@@ -178,7 +217,7 @@ impl BaseProvider<String> {
             panic!("没有ctx字段")
         }
     }
-    fn prepare_log_file(&mut self, append: bool) -> Result<(), Box<dyn Error>>{
+    pub(crate) fn prepare_log_file(&mut self, append: bool) -> Result<(), Box<dyn Error>>{
         if let Ok(mut cmd) = self.cmd.as_ref().expect("没有cmd字段").write() {
             if self.log_file().eq("/dev/null"){
                 cmd.set_log_file(None);
@@ -209,4 +248,38 @@ impl BaseProvider<String> {
         Ok(())
     }
 
+    // DockerHook的log_file方法
+    pub(crate) fn docker_log_file(&self) -> String{
+        if let Some(ctx) = self.context().lock().unwrap().as_ref() {
+            if let Some(value) = ctx.get(&format!("{_LOG_FILE_KEY}:docker")){
+                return value
+            }
+        }
+        self.log_file()
+    }
+    
+}
+impl BaseProvider<Vec<String>> {
+    // DockerHook的volumes方法
+    // volumes返回已配置的卷和运行时需要的卷
+    // 包括mirror dirs和log file
+    pub(crate) fn docker_volumes(&self) -> Vec<String>{
+        if let Some(docker) = self.docker_ref(){
+            let mut vols = Vec::with_capacity(docker.volumes.len());
+            vols.extend(docker.volumes.iter().cloned());
+            
+            let ctx = self.context().lock().unwrap();
+            if let Some(ctx)  = ctx.as_ref(){
+                if let Some(ivs) = ctx.get("volumes"){
+                    vols.extend(ivs.iter().cloned());
+                }
+            }
+            vols
+            
+        }else { 
+            Vec::new()
+        }
+    }
+    
+    // 
 }

@@ -2,43 +2,49 @@
 use std::error::Error;
 use std::path::Path;
 use std::process::Command;
+use std::sync::{Arc, Mutex};
 use log::{error, info};
 use crate::config::MirrorConfig;
+use crate::context::Context;
 use crate::hooks::JobHook;
 use crate::provider::MirrorProvider;
 
 #[cfg(target_os = "linux")]
-pub(crate) struct BtrfsSnapshotHook<T: Clone> {
-    pub(crate) provider: Box<dyn MirrorProvider<ContextStoreVal=T>>,
+pub(crate) struct BtrfsSnapshotHook {
     pub(crate) mirror_snapshot_path: String,
 }
 
-// 运行作业的用户（通常是 rtsync）应该被授予运行BTRFS命令的权限
-// TODO: 检查文件系统是否为Btrfs
 #[cfg(target_os = "linux")]
-fn new_btrfs_snapshot_hook<T: Clone>(
-    provider: Box<dyn MirrorProvider<ContextStoreVal=T>>,
-    snapshot_path: &str,
-    mirror: MirrorConfig) -> BtrfsSnapshotHook<T>
-{
-    let mirror_snapshot_path = match mirror.snapshot_path.as_ref(){
-        Some(path) => path.clone(),
-        None => Path::new(snapshot_path).join(provider.name()).display().to_string(),
-    };
-    BtrfsSnapshotHook{
-        provider,
-        mirror_snapshot_path,
+impl BtrfsSnapshotHook {
+    // 运行作业的用户（通常是 rtsync）应该被授予运行BTRFS命令的权限
+    // TODO: 检查文件系统是否为Btrfs
+    pub(crate) fn new(provider_name: &str,
+                      snapshot_path: &str,
+                      mirror: MirrorConfig) -> BtrfsSnapshotHook
+    {
+        let mirror_snapshot_path = match mirror.snapshot_path.as_ref(){
+            Some(path) => path.clone(),
+            None => Path::new(snapshot_path).join(provider_name).display().to_string(),
+        };
+        BtrfsSnapshotHook{
+            mirror_snapshot_path,
+        }
     }
 }
 
+
+
+
 #[cfg(target_os = "linux")]
-impl<T: Clone> JobHook for BtrfsSnapshotHook<T> {
+impl JobHook for BtrfsSnapshotHook {
+    type ContextStoreVal = ();
+
     // 检查路径 snapshot_path/provider_name 是否存在
     // 情况1：不存在 => 创建一个新的子卷
     // 情况2：作为子卷存在 => 不处理
     // 情况3：作为目录存在 => 错误
-    fn per_job(&self) -> Result<(), Box<dyn Error>> {
-        let path = self.provider.working_dir();
+    fn per_job(&self, working_dir: String, _provider_name: String) -> Result<(), Box<dyn Error>> {
+        let path = working_dir;
         if !Path::new(&path).exists(){
             // 创建子卷
             if let Err(e) = create_btrfs_sub_volume(&path){
@@ -61,14 +67,27 @@ impl<T: Clone> JobHook for BtrfsSnapshotHook<T> {
         }
         Ok(())
     }
-    fn pre_exec(&self) -> Result<(), Box<dyn Error>> {
+
+    fn pre_exec(&self, 
+                _log_dir: String, 
+                _log_file: String,
+                _working_dir: String, 
+                _context: &Arc<Mutex<Option<Context<Self::ContextStoreVal>>>>) 
+        -> Result<(), Box<dyn Error>> 
+    {
         Ok(())
     }
-    fn post_exec(&self) -> Result<(), Box<dyn Error>> {
+
+    fn post_exec(&self,
+                 _context: &Arc<Mutex<Option<Context<Self::ContextStoreVal>>>>, 
+                 _provider_name: String) 
+        -> Result<(), Box<dyn Error>> 
+    {
         Ok(())
     }
+
     // 创建新的快照，如果旧快照存在，将其删除
-    fn post_success(&self) -> Result<(), Box<dyn Error>> {
+    fn post_success(&self, working_dir: String) -> Result<(), Box<dyn Error>> {
         let snapshot_path = &self.mirror_snapshot_path;
         if !Path::new(snapshot_path).exists() {
             match is_btrfs_sub_volume(snapshot_path) {
@@ -89,7 +108,7 @@ impl<T: Clone> JobHook for BtrfsSnapshotHook<T> {
         }
         // 创建一个新的可写快照
         // 快照是可写的，因此可以很容易地删除
-        if let Err(e) = create_btrfs_snapshot(&self.provider.working_dir(), snapshot_path){
+        if let Err(e) = create_btrfs_snapshot(&*working_dir, snapshot_path){
             error!("创建新的Btrfs快照失败，快照路径是：{snapshot_path}");
             return Err(e.into())
         }
@@ -160,8 +179,8 @@ fn delete_btrfs_sub_volume(path: &str) -> Result<(), String> {
     }
 }
 
-#[cfg(target_os = "linux")]
 // 创建可写btrfs快照
+#[cfg(target_os = "linux")]
 fn create_btrfs_snapshot(sub_volume_path: &str, snapshot_path: &str) -> Result<(), String> {
     // 构建创建快照的命令
     let output = Command::new("btrfs")

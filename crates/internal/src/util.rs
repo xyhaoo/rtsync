@@ -305,8 +305,8 @@ pub async fn get_json<T: for<'de> Deserialize<'de>>(url: &str, client: Arc<Optio
     }
 }
 
-// Extract matches from a file using regex
-fn find_all_submatches_in_file(file_name: &str, re: &Regex) -> Result<Vec<Vec<String>>, io::Error> {
+// Extract matches from a file using regex 
+pub fn find_all_submatches_in_file(file_name: &str, re: &Regex) -> Result<Vec<Vec<String>>, io::Error> {
     if file_name == "/dev/null" {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "不合法的log文件"));
     }
@@ -323,8 +323,8 @@ fn find_all_submatches_in_file(file_name: &str, re: &Regex) -> Result<Vec<Vec<St
         .collect())
 }
 
-// Extract size from a log file using regex
-fn extract_size_from_log(log_file: &str, re: &Regex) -> Option<String> {
+// Extract size from a log file using regex 
+pub fn extract_size_from_log(log_file: &str, re: &Regex) -> Option<String> {
     match find_all_submatches_in_file(log_file, re) {
         Ok(matches) if !matches.is_empty() => { 
             matches.last().and_then(|m| m.get(0).cloned()) 
