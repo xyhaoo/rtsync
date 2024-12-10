@@ -1,16 +1,17 @@
 use std::collections::HashMap;
 use std::error::Error;
+use anymap::{self, Map};
 // Context对象的目的是存储运行时配置
 // Context 是一个分层的键值存储
 // 当进入一个新的上下文时，修改将被存储在新的层次上
 // 当退出时，最上层的上下文被弹出，存储回到退出之前的状态
-#[derive(Debug, Clone, Default)]
-pub struct Context<T: Clone> {
-    parent: Option<Box<Context<T>>>,  // 上一个 Context
-    store: HashMap<String, T>, // 当前层的键值存储
+#[derive(Debug, Default)]
+pub struct Context {
+    parent: Option<Box<Context>>,  // 上一个 Context
+    store: HashMap<String, Map>, // 当前层的键值存储
 }
 
-impl<T: Clone> Context<T> {
+impl Context {
     // 创建一个新的 Context
     pub fn new() -> Self {
         Context {
@@ -20,9 +21,9 @@ impl<T: Clone> Context<T> {
     }
 
     // 生成一个新的层次的 Context
-    pub fn enter(&self) -> Self {
+    pub fn enter(self) -> Self {
         Context {
-            parent: Some(Box::new(self.clone())),
+            parent: Some(Box::new(self)),
             store: HashMap::new(),
         }
     }
@@ -36,67 +37,75 @@ impl<T: Clone> Context<T> {
     }
 
     // 获取当前层或下层 Context 中的值
-    pub fn get(&self, key: &str) -> Option<T> {
+    pub fn get(&self, key: &str) -> Option<&Map> {
         // 尝试从当前层获取
         let current = self.store.get(key);
         if self.parent.is_none() {
             if let Some(value) = current {
-               return Some(value.clone())
+               return Some(value)
             }
             None
         }else {
             if let Some(value) = current {
-                Some(value.clone())
-            }else { 
+                Some(value)
+            }else {
                 self.parent.as_ref().and_then(|parent| parent.get(key))
             }
         }
     }
 
     // 在当前层设置值
-    pub fn set(&mut self, key: String, value: T) {
+    pub fn set(&mut self, key: String, value: Map) {
         self.store.insert(key, value);
     }
 }
 
 #[cfg(test)]
 mod tests {
+    use anymap::AnyMap;
     use super::*;
     #[test]
     fn test_context() {
-        let mut ctx = Context::<String>::new();
+        let mut ctx = Context::new();
         assert!(ctx.parent.is_none());
-        
-        ctx.set("logdir1".into(), "logdir_value_1".into());
-        ctx.set("logdir2".into(), "logdir_value_2".into());
-        assert_eq!(ctx.get("logdir1"), Some("logdir_value_1".into()));
-        
+        let mut l1 = AnyMap::new();
+        l1.insert("logdir_value_1");
+        let mut l2 = AnyMap::new();
+        l2.insert("logdir_value_2");
+
+        ctx.set("logdir1".into(), l1);
+        ctx.set("logdir2".into(), l2);
+        assert_eq!(ctx.get("logdir1").unwrap().get::<&str>(), Some(&"logdir_value_1"));
+
         test_entering_a_new_context(ctx)
     }
-    fn test_entering_a_new_context(mut ctx: Context<String>) {
+    fn test_entering_a_new_context(mut ctx: Context) {
         ctx = ctx.enter();
-        assert_eq!(ctx.get("logdir1"), Some("logdir_value_1".into()));
-        
-        ctx.set("logdir1".into(), "new_value_1".into());
-        assert_eq!(ctx.get("logdir1"), Some("new_value_1".into()));
-        
-        assert_eq!(ctx.get("logdir2"), Some("logdir_value_2".into()));
+        assert_eq!(ctx.get("logdir1").unwrap().get::<&str>(), Some(&"logdir_value_1"));
+
+        let mut l1 = AnyMap::new();
+        l1.insert("new_value_1");
+        ctx.set("logdir1".into(), l1);
+        assert_eq!(ctx.get("logdir1").unwrap().get::<&str>(), Some(&"new_value_1"));
+
+        assert_eq!(ctx.get("logdir2").unwrap().get::<&str>(), Some(&"logdir_value_2"));
 
         test_accessing_invalid_context(&ctx);
         test_accessing_new_context(ctx);
     }
-    fn test_accessing_invalid_context(ctx: &Context<String>) {
-        assert_eq!(ctx.get("invalid_key"), None);
-    }
-    fn test_accessing_new_context(mut ctx: Context<String>) {
-        ctx = ctx.exit().unwrap();
+    fn test_accessing_invalid_context(ctx: &Context) {
+        assert!(ctx.get("invalid_key").is_none());
         
-        assert_eq!(ctx.get("logdir1"), Some("logdir_value_1".into()));
-        assert_eq!(ctx.get("logdir2"), Some("logdir_value_2".into()));
+    }
+    fn test_accessing_new_context(mut ctx: Context) {
+        ctx = ctx.exit().unwrap();
+
+        assert_eq!(ctx.get("logdir1").unwrap().get::<&str>(), Some(&"logdir_value_1"));
+        assert_eq!(ctx.get("logdir2").unwrap().get::<&str>(), Some(&"logdir_value_2"));
 
         test_exiting_from_bottom_context(ctx);
     }
-    fn test_exiting_from_bottom_context(ctx: Context<String>) {
+    fn test_exiting_from_bottom_context(ctx: Context) {
         let result = ctx.exit();
         assert_eq!(result.is_err(), true);
     }
@@ -129,7 +138,7 @@ impl<T: Clone> Context<T> {
             }
         ))
     }
-    
+
     //enter生成一个新的context层
     fn enter(ctx: Rc<RefCell<Context<T>>>) -> Rc<RefCell<Context<T>>> {
         Rc::new(RefCell::new(
@@ -140,10 +149,10 @@ impl<T: Clone> Context<T> {
         ))
     }
 
-    
+
     //exit返回上一层context
-    fn exit(ctx: Rc<RefCell<Context<T>>>) 
-        -> Result<Rc<RefCell<Context<T>>>, Box<dyn std::error::Error>> 
+    fn exit(ctx: Rc<RefCell<Context<T>>>)
+        -> Result<Rc<RefCell<Context<T>>>, Box<dyn std::error::Error>>
     {
         match ctx.borrow_mut().parent {
             None => Err("Cannot exit the bottom layer context".to_string().into()),
@@ -156,17 +165,17 @@ impl<T: Clone> Context<T> {
     pub(crate) fn get(ctx: Rc<RefCell<Context<T>>>, key: &str) -> Option<T> {
         // 检查当前层的store
         if let Some(value) = ctx.borrow().store.get(key) {
-            return Some(value.clone()); 
+            return Some(value.clone());
         }
 
         // 如果有下层context，检查其store
         if let Some(parent) = &ctx.borrow().parent {
-            return Self::get(Rc::clone(parent), key); 
+            return Self::get(Rc::clone(parent), key);
         }
-        
+
         None
     }
-    
+
     // set设置当前层的key
     pub(crate) fn set(ctx: Rc<RefCell<Context<T>>>, key: &str, val: T) {
         ctx.borrow_mut().store.insert(key.to_string(), val);

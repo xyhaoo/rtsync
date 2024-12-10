@@ -9,11 +9,12 @@ use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use log::{debug, error, warn};
 use crate::config::{DockerConfig, MemBytes, MirrorConfig};
-
+use anymap::AnyMap;
 use crate::context::Context;
 use crate::hooks::{EmptyHook, JobHook};
 use crate::provider::MirrorProvider;
 
+#[derive(Debug, Clone)]
 pub(crate) struct DockerHook {
     // pub(crate) empty_hook: EmptyHook<T>,
     pub(crate) image: String,
@@ -22,17 +23,53 @@ pub(crate) struct DockerHook {
     pub(crate) memory_limit: MemBytes,
 }
 
+impl DockerHook{
+    pub(crate) fn new(g_cfg: DockerConfig, m_cfg: MirrorConfig) -> Self
+    {
+        let mut volumes: Vec<String> = vec![];
+        if let Some(v) = &g_cfg.volumes{
+            volumes.extend(v.iter().cloned());
+        }
+        if let Some(v) = &m_cfg.docker_volumes{
+            volumes.extend(v.iter().cloned());
+        }
+        match &m_cfg.exclude_file {
+            Some(file) if file.len()>0 => {
+                let arg = format!("{}:{}:ro", file, file);
+                volumes.push(arg);
+            },
+            _ => {},
+        }
+        let mut options: Vec<String> = vec![];
+        if let Some(opts) = &g_cfg.options{
+            options.extend(opts.iter().cloned());
+        }
+        if let Some(opts) = &m_cfg.docker_options{
+            options.extend(opts.iter().cloned());
+        }
 
+        DockerHook{
+            image: m_cfg.docker_image.unwrap_or_default(),
+            volumes,
+            options,
+            memory_limit: m_cfg.memory_limit.unwrap_or_default(),
+        }
+    }
+
+    pub(crate) fn name(&self, provider_name: String) -> String {
+        format!("rtsync-job-{}", provider_name)
+    }
+    
+
+}
 
 impl JobHook for DockerHook {
-    type ContextStoreVal = Vec<String>;
-
     fn pre_exec(&self,
                 _provider_name: String,
                 log_dir: String, 
                 log_file: String, 
                 working_dir: String,
-                context: &Arc<Mutex<Option<Context<Self::ContextStoreVal>>>>) 
+                context: &Arc<Mutex<Option<Context>>>) 
         -> Result<(), Box<dyn Error>>
     {
         // 如果目录不存在，则创建目录
@@ -48,16 +85,19 @@ impl JobHook for DockerHook {
         
         // 重写working_dir
         let mut cur_ctx = context.lock().unwrap();
-        *cur_ctx = match cur_ctx.to_owned() {
+        
+        *cur_ctx = match cur_ctx.take(){
             Some(ctx) => Some(ctx.enter()),
             None => None,
         };
+        
         if let Some(ctx) = cur_ctx.as_mut(){
-            ctx.set(
-                "volumes".to_string(), vec![
-                    format!("{}:{}", &log_dir, log_dir),
-                    format!("{}:{}", &log_file, &log_file),
-                    format!("{}:{}", &working_dir, &working_dir)]);
+            let mut value = AnyMap::new();
+            value.insert(vec![
+                format!("{}:{}", &log_dir, log_dir),
+                format!("{}:{}", &log_file, &log_file),
+                format!("{}:{}", &working_dir, &working_dir)]);
+            ctx.set("volumes".to_string(), value);
         }
         
 
@@ -65,7 +105,7 @@ impl JobHook for DockerHook {
     }
 
     fn post_exec(&self, 
-                 context: &Arc<Mutex<Option<Context<Self::ContextStoreVal>>>>, 
+                 context: &Arc<Mutex<Option<Context>>>, 
                  provider_name: String) 
         -> Result<(), Box<dyn Error>>
     {
@@ -102,7 +142,7 @@ impl JobHook for DockerHook {
 
         // 😅
         let mut cur_ctx = context.lock().unwrap();
-        *cur_ctx = match cur_ctx.to_owned(){
+        *cur_ctx = match cur_ctx.take(){
             Some(ctx) => {
                 match ctx.exit() {
                     Ok(ctx) => Some(ctx),
@@ -115,43 +155,8 @@ impl JobHook for DockerHook {
     }
     
 }
-impl DockerHook{
-    pub(crate) fn new(g_cfg: DockerConfig, m_cfg: MirrorConfig) -> Self
-    {
-        let mut volumes: Vec<String> = vec![];
-        if let Some(v) = &g_cfg.volumes{
-            volumes.extend(v.iter().cloned());
-        }
-        if let Some(v) = &m_cfg.docker_volumes{
-            volumes.extend(v.iter().cloned());
-        }
-        match &m_cfg.exclude_file {
-            Some(file) if file.len()>0 => {
-                let arg = format!("{}:{}:ro", file, file);
-                volumes.push(arg);
-            },
-            _ => {},
-        }
-        let mut options: Vec<String> = vec![];
-        if let Some(opts) = &g_cfg.options{
-            options.extend(opts.iter().cloned());
-        }
-        if let Some(opts) = &m_cfg.docker_options{
-            options.extend(opts.iter().cloned());
-        }
 
-        DockerHook{
-            image: m_cfg.docker_image.unwrap_or_default(),
-            volumes,
-            options,
-            memory_limit: m_cfg.memory_limit.unwrap_or_default(),
-        }
-    }
-    
-    pub(crate) fn name(&self, provider_name: String) -> String {
-        format!("rtsync-job-{}", provider_name)
-    }
-}
+
 
 /*
 impl DockerHook<Vec<String>> {

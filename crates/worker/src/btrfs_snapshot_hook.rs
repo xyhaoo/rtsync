@@ -6,10 +6,10 @@ use std::sync::{Arc, Mutex};
 use log::{error, info};
 use crate::config::MirrorConfig;
 use crate::context::Context;
-use crate::hooks::JobHook;
-use crate::provider::MirrorProvider;
+use crate::hooks::{JobHook};
 
 #[cfg(target_os = "linux")]
+#[derive(Debug, Clone)]
 pub(crate) struct BtrfsSnapshotHook {
     pub(crate) mirror_snapshot_path: String,
 }
@@ -37,7 +37,6 @@ impl BtrfsSnapshotHook {
 
 #[cfg(target_os = "linux")]
 impl JobHook for BtrfsSnapshotHook {
-    type ContextStoreVal = ();
 
     // 检查路径 snapshot_path/provider_name 是否存在
     // 情况1：不存在 => 创建一个新的子卷
@@ -68,18 +67,19 @@ impl JobHook for BtrfsSnapshotHook {
         Ok(())
     }
 
-    fn pre_exec(&self, 
-                _log_dir: String, 
+    fn pre_exec(&self,
+                _provider_name: String,
+                _log_dir: String,
                 _log_file: String,
-                _working_dir: String, 
-                _context: &Arc<Mutex<Option<Context<Self::ContextStoreVal>>>>) 
+                _working_dir: String,
+                _context: &Arc<Mutex<Option<Context>>>) 
         -> Result<(), Box<dyn Error>> 
     {
         Ok(())
     }
 
     fn post_exec(&self,
-                 _context: &Arc<Mutex<Option<Context<Self::ContextStoreVal>>>>, 
+                 _context: &Arc<Mutex<Option<Context>>>, 
                  _provider_name: String) 
         -> Result<(), Box<dyn Error>> 
     {
@@ -87,7 +87,13 @@ impl JobHook for BtrfsSnapshotHook {
     }
 
     // 创建新的快照，如果旧快照存在，将其删除
-    fn post_success(&self, working_dir: String) -> Result<(), Box<dyn Error>> {
+    fn post_success(&self,
+                    _provider_name: String,
+                    working_dir: String,
+                    _upstream: String,
+                    _log_dir: String,
+                    _log_file: String) -> Result<(), Box<dyn Error>> 
+    {
         let snapshot_path = &self.mirror_snapshot_path;
         if !Path::new(snapshot_path).exists() {
             match is_btrfs_sub_volume(snapshot_path) {
@@ -116,6 +122,9 @@ impl JobHook for BtrfsSnapshotHook {
         Ok(())
     }
 }
+
+
+
 #[cfg(target_os = "linux")]
 fn create_btrfs_sub_volume(path: &str) -> Result<(), String> {
     let output = Command::new("btrfs")

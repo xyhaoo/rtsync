@@ -20,5 +20,6 @@ mod btrfs_snapshot_hook;
 mod job;
 mod worker;
 mod config_test;
+mod provider_test;
 
 

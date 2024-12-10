@@ -4,41 +4,32 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex, RwLock};
 use std::sync::atomic::{AtomicBool, Ordering};
+
 use chrono::{DateTime, Duration, Utc};
+use enum_dispatch::enum_dispatch;
 use log::{debug, error, info, log, warn};
 use users::get_current_uid;
 use crate::cgroup::CGroupHook;
 use crate::context::Context;
 use crate::docker::DockerHook;
-use crate::hooks::{EmptyHook, JobHook};
+use crate::hooks::{EmptyHook, HookType, JobHook, JobIntoBox};
 use crate::provider::{_LOG_DIR_KEY, _LOG_FILE_KEY, _WORKING_DIR_KEY};
 use crate::runner::CmdJob;
 use crate::zfs_hook::ZfsHook;
 #[cfg(target_os = "linux")]
 use crate::btrfs_snapshot_hook::BtrfsSnapshotHook;
 use crate::btrfs_snapshot_hook_nolinux;
+use crate::btrfs_snapshot_hook_nolinux::BtrfsSnapshotHook;
 use crate::config::{DockerConfig, MirrorConfig};
 use crate::exec_post_hook::ExecPostHook;
 use crate::loglimit_hook::LogLimiter;
 
-pub(crate) enum HookType{
-    #[cfg(target_os = "linux")]
-    Btrfs(btrfs_snapshot_hook::BtrfsSnapshotHook),
-    BtrfsNoLinux(btrfs_snapshot_hook_nolinux::BtrfsSnapshotHook),
-    Cgroup(CGroupHook),
-    Docker(DockerHook),
-    Empty(EmptyHook),
-    ExecPost(ExecPostHook),
-    LogLimiter(LogLimiter),
-    Zfs(ZfsHook),
-    
-}
 
 // baseProvider是providers的基本混合
 // mutex
 #[derive(Default)]
-pub(crate) struct BaseProvider<T: Clone> {
-    pub(crate) ctx: Arc<Mutex<Option<Context<T>>>> ,
+pub(crate) struct BaseProvider {
+    pub(crate) ctx: Arc<Mutex<Option<Context>>> ,
     pub(crate) name: String,
     pub(crate) interval: Duration,
     pub(crate) retry: i64,
@@ -53,9 +44,9 @@ pub(crate) struct BaseProvider<T: Clone> {
     pub(crate) zfs: Option<ZfsHook>,
     pub(crate) docker: Option<DockerHook>,
 
-    pub(crate) hooks: Vec<Box<dyn JobHook<ContextStoreVal=T>>>
+    pub(crate) hooks: Vec<Box<dyn JobHook>>
 }
-impl<T: Clone> BaseProvider<T> {
+impl BaseProvider {
     pub(crate) fn name(&self) -> &str {
         &self.name
     }
@@ -82,7 +73,7 @@ impl<T: Clone> BaseProvider<T> {
     //     None
     // }
     
-    fn context(&self) -> &Mutex<Option<Context<T>>> {
+    fn context(&self) -> &Mutex<Option<Context>> {
         self.ctx.as_ref()
     }
     
@@ -105,14 +96,21 @@ impl<T: Clone> BaseProvider<T> {
     
     pub(crate) fn add_hook(&mut self, hook: HookType) {
         match hook {
-            HookType::Cgroup(cgroup) => {self.cgroup = Some(cgroup);},
-            HookType::Zfs(zfs) => {self.zfs = Some(zfs);},
-            HookType::Docker(docker) => {self.docker = Some(docker);},
+            HookType::Cgroup(ref cgroup) => {
+                self.cgroup = Some(cgroup.clone());
+            },
+            HookType::Zfs(ref zfs) => {
+                self.zfs = Some(zfs.clone());
+            },
+            HookType::Docker(ref docker) => {
+                self.docker = Some(docker.clone());
+            },
             _ => {}
         }
+        self.hooks.push(HookType::into_box(hook));
     }
     
-    fn hooks(&self) -> &Vec<Box<dyn JobHook<ContextStoreVal=T>>>{
+    fn hooks(&self) -> &Vec<Box<dyn JobHook>>{
         self.hooks.as_ref()
     }
     
@@ -124,7 +122,7 @@ impl<T: Clone> BaseProvider<T> {
         &self.zfs
     }
     
-    fn docker_ref(&self) -> &Option<DockerHook>{
+    pub(crate) fn docker_ref(&self) -> &Option<DockerHook>{
         &self.docker
     }
 
@@ -178,16 +176,11 @@ impl<T: Clone> BaseProvider<T> {
         let btrfs_snapshot = BtrfsSnapshotHook::new(self.name(), snapshot_path, mirror);
         // self.hooks.push(Box::<T>::new(btrfs_snapshot.into()));
     }
-    
-    
-}
 
-
-impl BaseProvider<String> {
     pub(crate) fn working_dir(&self) -> String {
         if let Some(ctx) = self.ctx.lock().unwrap().as_ref() {
             if let Some(v) = ctx.get(_WORKING_DIR_KEY){
-                v
+                v.get::<String>().cloned().unwrap()
             }else {
                 panic!("工作目录不应该不存在")
             }
@@ -195,10 +188,11 @@ impl BaseProvider<String> {
             panic!("没有ctx字段")
         }
     }
+
     pub(crate) fn log_dir(&self) -> String {
         if let Some(ctx) = self.ctx.lock().unwrap().as_ref() {
             if let Some(v) = ctx.get(_LOG_DIR_KEY){
-                v
+                v.get::<String>().cloned().unwrap()
             }else {
                 panic!("日志目录不应该不存在")
             }
@@ -206,10 +200,11 @@ impl BaseProvider<String> {
             panic!("没有ctx字段")
         }
     }
+
     pub(crate) fn log_file(&self) -> String {
         if let Some(ctx) = self.ctx.lock().unwrap().as_ref() {
             if let Some(v) = ctx.get(_LOG_FILE_KEY){
-                v
+                v.get::<String>().cloned().unwrap()
             }else {
                 panic!("日志文件不应该不存在")
             }
@@ -217,6 +212,7 @@ impl BaseProvider<String> {
             panic!("没有ctx字段")
         }
     }
+
     pub(crate) fn prepare_log_file(&mut self, append: bool) -> Result<(), Box<dyn Error>>{
         if let Ok(mut cmd) = self.cmd.as_ref().expect("没有cmd字段").write() {
             if self.log_file().eq("/dev/null"){
@@ -252,14 +248,12 @@ impl BaseProvider<String> {
     pub(crate) fn docker_log_file(&self) -> String{
         if let Some(ctx) = self.context().lock().unwrap().as_ref() {
             if let Some(value) = ctx.get(&format!("{_LOG_FILE_KEY}:docker")){
-                return value
+                return value.get::<String>().cloned().unwrap()
             }
         }
         self.log_file()
     }
-    
-}
-impl BaseProvider<Vec<String>> {
+
     // DockerHook的volumes方法
     // volumes返回已配置的卷和运行时需要的卷
     // 包括mirror dirs和log file
@@ -267,19 +261,17 @@ impl BaseProvider<Vec<String>> {
         if let Some(docker) = self.docker_ref(){
             let mut vols = Vec::with_capacity(docker.volumes.len());
             vols.extend(docker.volumes.iter().cloned());
-            
+
             let ctx = self.context().lock().unwrap();
             if let Some(ctx)  = ctx.as_ref(){
                 if let Some(ivs) = ctx.get("volumes"){
-                    vols.extend(ivs.iter().cloned());
+                    vols.extend(ivs.get::<Vec<String>>().cloned().unwrap());
                 }
             }
             vols
-            
-        }else { 
+
+        }else {
             Vec::new()
         }
     }
-    
-    // 
 }

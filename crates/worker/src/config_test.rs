@@ -286,7 +286,7 @@ use_ipv6 = true
         assert_eq!(cfg.mirrors.len(), 6);
     }
 
-    use crate::provider::MirrorProvider;
+    use crate::provider::{new_mirror_provider, MirrorProvider};
     #[test]
     fn test_valid_provider(){
         //生成一个包含在临时目录（前缀为rtsync）中的文件rtsync
@@ -303,9 +303,15 @@ use_ipv6 = true
         tmp_file.write_all(CFG_BLOB.as_bytes()).expect("failed to write to tmp file");
         let cfg = load_config(Some(tmp_file_path.to_str().unwrap())).unwrap();
 
-        let providers:HashMap<String, Box<dyn MirrorProvider<ContextStoreVal=String>>> = HashMap::new();
-        for m in cfg.mirrors {
-            // let p = new_mirror_provider()
+        let mut providers: HashMap<String, Box<dyn MirrorProvider>> = HashMap::new();
+        for m in &cfg.mirrors {
+            let p = new_mirror_provider(m.clone(), cfg.clone());
+            providers.insert(p.name(), p);
         }
+        let p = providers.get("AOSP").unwrap();
+        assert_eq!(p.name(), "AOSP".to_string());
+        assert_eq!(p.log_dir(), "/var/log/rtsync/AOSP".to_string());
+        assert_eq!(p.log_file(), "/var/log/rtsync/AOSP/latest.log".to_string())
+
     }
 }

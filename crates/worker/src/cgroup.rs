@@ -17,9 +17,8 @@ use log::{debug, info, log, trace};
 use crate::context::Context;
 // use cgroups_rs::hierarchies;
 
-
+#[derive(Debug, Clone)]
 pub struct CGroupHook{
-    // empty_hook: EmptyHook<T>,
     cg_cfg: CGroupConfig,
     mem_limit: MemBytes,
     // cg_mgr_v1: cgroups_rs::Cgroup,
@@ -111,100 +110,110 @@ fn get_self_cgroup_path() -> Result<String, io::Error> {
     Err(io::ErrorKind::InvalidData.into())
 }
 
-impl CGroupConfig{
-    // fn init_cgroup(&mut self) -> io::Result<()> {
-    //     let os = env::consts::OS;
-    //     if os != "linux" {
-    //         panic!("Only linux is supported");
-    //     }
-    //     
-    //     debug!("初始化cgroup");
-    // 
-    //     // 如果 base_group 为空，表示使用当前进程的 cgroup，否则指定一个绝对路径
-    //     let mut base_group = self.group.clone();
-    //     if let Some(group) = base_group{
-    //         if !group.is_empty(){
-    //             base_group = Some(format!("/{}", group)); // Ensure absolute path
-    //         }else { 
-    //             base_group = None;
-    //         }
-    //     }
-    //     
-    //     // 检查现在是v1还是v2，is_unified为true表示v2
-    //     let is_unified = hierarchies::is_cgroup2_unified_mode();
-    //     self.is_unified = Some(is_unified); // You can check cgroup mode here
-    //     
-    //     // v2的处理
-    //     if is_unified {
-    //         debug!("监测到Cgroup V2");
-    //         let mut group_path = base_group.clone();
-    //         if group_path.is_none() {
-    //             debug!("检测我的cgroup路径");
-    //             match get_self_cgroup_path() {
-    //                 Ok(cgroup_path) => {
-    //                     group_path = Some(cgroup_path);
-    //                 }
-    //                 Err(e) => {
-    //                     return Err(e);
-    //                 }
-    //             }
-    //         }
-    //         info!("使用cgroup路径：{}", group_path.unwrap());
-    //         
-    //         let group_path = if base_group.is_empty() {
-    //             self.detect_cgroup_path()?
-    //         } else {
-    //             base_group
-    //         };
-    //         println!("Using cgroup path: {}", group_path);
-    //         self.cg_mgr_v2 = Some(group_path);
-    //     } else {
-    //         println!("Cgroup V1 detected");
-    //         let group_path = if base_group.is_empty() {
-    //             "/sys/fs/cgroup" // Default path
-    //         } else {
-    //             &base_group
-    //         };
-    //         self.cg_mgr_v1 = Some(group_path.to_string());
-    //     }
-    // 
-    //     // Further logic for creating subgroups and moving processes (simplified)
-    //     self.create_and_move_processes()
-    // }
+impl CGroupHook{
+    fn new(cg_cfg: CGroupConfig, mem_limit: MemBytes) -> Self {
+        CGroupHook{
+            cg_cfg,
+            mem_limit,
+        }
+    }
+    
+    /*
+    fn init_cgroup(&mut self) -> io::Result<()> {
+        let os = env::consts::OS;
+        if os != "linux" {
+            panic!("Only linux is supported");
+        }
+        
+        debug!("初始化cgroup");
+    
+        // 如果 base_group 为空，表示使用当前进程的 cgroup，否则指定一个绝对路径
+        let mut base_group = self.group.clone();
+        if let Some(group) = base_group{
+            if !group.is_empty(){
+                base_group = Some(format!("/{}", group)); // Ensure absolute path
+            }else { 
+                base_group = None;
+            }
+        }
+        
+        // 检查现在是v1还是v2，is_unified为true表示v2
+        let is_unified = hierarchies::is_cgroup2_unified_mode();
+        self.is_unified = Some(is_unified); // You can check cgroup mode here
+        
+        // v2的处理
+        if is_unified {
+            debug!("监测到Cgroup V2");
+            let mut group_path = base_group.clone();
+            if group_path.is_none() {
+                debug!("检测我的cgroup路径");
+                match get_self_cgroup_path() {
+                    Ok(cgroup_path) => {
+                        group_path = Some(cgroup_path);
+                    }
+                    Err(e) => {
+                        return Err(e);
+                    }
+                }
+            }
+            info!("使用cgroup路径：{}", group_path.unwrap());
+            
+            let group_path = if base_group.is_empty() {
+                self.detect_cgroup_path()?
+            } else {
+                base_group
+            };
+            println!("Using cgroup path: {}", group_path);
+            self.cg_mgr_v2 = Some(group_path);
+        } else {
+            println!("Cgroup V1 detected");
+            let group_path = if base_group.is_empty() {
+                "/sys/fs/cgroup" // Default path
+            } else {
+                &base_group
+            };
+            self.cg_mgr_v1 = Some(group_path.to_string());
+        }
+    
+        // Further logic for creating subgroups and moving processes (simplified)
+        self.create_and_move_processes()
+    }
+     */
 
     fn detect_cgroup_path(&self) -> io::Result<String> {
         // Simulate detection of the current cgroup path for the process
         Ok("/sys/fs/cgroup/unified".to_string())
     }
 
-    fn create_and_move_processes(&self) -> io::Result<()> {
-        // Logic to create subgroups and move processes into it (simplified)
-        println!("Creating subgroups and moving processes...");
-
-        if let Some(group_path) = &self.cg_mgr_v2 {
-            println!("Creating sub group in cgroup v2: {}", group_path);
-            // Here you could interact with the cgroup v2 filesystem to create subgroups
-        }
-
-        Ok(())
-    }
+    // fn create_and_move_processes(&self) -> io::Result<()> {
+    //     // Logic to create subgroups and move processes into it (simplified)
+    //     println!("Creating subgroups and moving processes...");
+    // 
+    //     if let Some(group_path) = &self.cg_mgr_v2 {
+    //         println!("Creating sub group in cgroup v2: {}", group_path);
+    //         // Here you could interact with the cgroup v2 filesystem to create subgroups
+    //     }
+    // 
+    //     Ok(())
+    // }
 }
 
 impl JobHook for CGroupHook  {
-    type ContextStoreVal = ();
 
     fn pre_exec(&self,
                 _provider_name: String,
                 _log_dir: String,
                 _log_file: String,
                 _working_dir: String,
-                _context: &Arc<Mutex<Option<Context<Self::ContextStoreVal>>>>)
+                _context: &Arc<Mutex<Option<Context>>>)
         -> Result<(), Box<dyn Error>> 
     {
         todo!()
     }
-    fn post_exec(&self, context: &Arc<Mutex<Option<Context<Self::ContextStoreVal>>>>, provider_name: String) -> Result<(), Box<dyn Error>> {
+    fn post_exec(&self, context: &Arc<Mutex<Option<Context>>>, provider_name: String) -> Result<(), Box<dyn Error>> {
         todo!()
     }
 }
+
+
 

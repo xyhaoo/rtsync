@@ -3,21 +3,24 @@ use std::path::PathBuf;
 use crate::config::{ProviderEnum, MirrorConfig, Config};
 use crate::common;
 use crate::cgroup::CGroupHook;
-use crate::hooks::JobHook;
+use crate::hooks::{HookType, JobHook};
 use crate::context::Context;
 // use std::sync::mpsc;
 use crossbeam_channel::{Sender, Receiver};
 use chrono::{DateTime, Duration, Utc};
 use regex::Regex;
-use log::warn;
+use log::{error, warn};
 use tera::Tera;
 use crate::cmd_provider::{CmdConfig, CmdProvider};
 use crate::docker::DockerHook;
 use crate::rsync_provider::{RsyncConfig, RsyncProvider};
 use crate::two_stage_rsync_provider::{TwoStageRsyncConfig, TwoStageRsyncProvider};
 use crate::zfs_hook::ZfsHook;
-use crate::base_provider::HookType;
+
+use crate::btrfs_snapshot_hook_nolinux::BtrfsSnapshotHook;
+use crate::exec_post_hook::{ExecOn, ExecPostHook};
 use crate::loglimit_hook::LogLimiter;
+
 // mirror provider是mirror job的包装器
 
 pub(crate) const _WORKING_DIR_KEY: &str = "working_dir";
@@ -27,8 +30,6 @@ pub(crate) const _LOG_FILE_KEY: &str = "log_file";
 
 // MirrorProvider trait
 pub trait MirrorProvider: /*Clone+Sized*/{
-    type ContextStoreVal: Clone;  // 定义关联类型 T
-
     // name
     fn name(&self) -> String {"".to_string()}
     fn upstream(&self) -> String;
@@ -52,28 +53,28 @@ pub trait MirrorProvider: /*Clone+Sized*/{
     fn docker(&self) -> Option<&DockerHook> {None}
 
     fn add_hook(&mut self, hook: HookType);
-    fn hooks(&self) -> Vec<Box<dyn JobHook<ContextStoreVal=Self::ContextStoreVal>>> {Vec::new()}
+    fn hooks(&self) -> Vec<Box<dyn JobHook>> {Vec::new()}
 
     fn interval(&self)-> Duration {Duration::seconds(1)}
     fn retry(&self) -> u64 {0}
     fn timeout(&self) -> Duration {Duration::seconds(1)}
 
     fn working_dir(&self) -> String {String::new()}
-    fn log_dir(&self) -> String {String::new()}
-    fn log_file(&self) -> String {String::new()}
+    fn log_dir(&self) -> String;
+    fn log_file(&self) -> String;
     fn is_master(&self) -> bool {false}
     fn data_size(&self) -> String;
 
     // enter context
-    fn enter_context(&self) -> Option<&mut Context<Self::ContextStoreVal>> { None}
+    fn enter_context(&self) -> Option<&mut Context> { None}
     // exit context
-    fn exit_context(&self) -> Result<Context<Self::ContextStoreVal>, Box<dyn Error>> {Err("".into())}
+    fn exit_context(&self) -> Result<Context, Box<dyn Error>> {Err("".into())}
     // return context
-    fn context(&self) -> Option<Context<Self::ContextStoreVal>> {None}
+    fn context(&self) -> Option<Context> {None}
 }
 
 // new_mirror_provider使用一个MirrorConfig和全局的Config创建一个MirrorProvider实例
-fn new_mirror_provider(mirror: &mut MirrorConfig, cfg: &Config) -> Box<dyn MirrorProvider<ContextStoreVal = String>>
+pub(crate) fn new_mirror_provider(mut mirror: MirrorConfig, cfg: Config) -> Box<dyn MirrorProvider>
 {
     // 使用m中的name字段匹配log_dir中的占位符
     let format_log_dir = |log_dir: String, m: &MirrorConfig|-> String{
@@ -116,7 +117,7 @@ fn new_mirror_provider(mirror: &mut MirrorConfig, cfg: &Config) -> Box<dyn Mirro
         Some(other) => Some(other),
     };
 
-    let log_dir = format_log_dir(log_dir, mirror);
+    let log_dir = format_log_dir(log_dir, &mirror);
 
     //is master
     let mut is_master = true;
@@ -128,7 +129,7 @@ fn new_mirror_provider(mirror: &mut MirrorConfig, cfg: &Config) -> Box<dyn Mirro
         _ => {},
     }
 
-    let mut provider: Box<dyn MirrorProvider<ContextStoreVal=String>>;
+    let mut provider: Box<dyn MirrorProvider>;
     
     match &mirror.provider{
         Some(_provider) if _provider.eq(&ProviderEnum::Command) => {
@@ -227,9 +228,66 @@ fn new_mirror_provider(mirror: &mut MirrorConfig, cfg: &Config) -> Box<dyn Mirro
     // add logging hook
     provider.add_hook(HookType::LogLimiter(LogLimiter::new()));
 
+    // add zfs hook
+    if cfg.zfs.enable.unwrap() && cfg.zfs.z_pool.is_some(){
+        let z_pool = cfg.zfs.z_pool.clone().unwrap();
+        provider.add_hook(HookType::Zfs(ZfsHook::new(z_pool)));
+    }
 
+    // add btrfs snapshot hook
+    if cfg.btrfs_snapshot.enable.unwrap() && cfg.btrfs_snapshot.snapshot_path.is_some(){
+        let snapshot_path = cfg.btrfs_snapshot.snapshot_path.clone().unwrap();
+        provider.add_hook(HookType::BtrfsNoLinux(BtrfsSnapshotHook::new(&*snapshot_path, mirror.clone())));
+    }
 
+    // add docker hook
+    if cfg.docker.enable.unwrap() && !mirror.docker_image.as_ref().unwrap().is_empty(){
+        provider.add_hook(HookType::Docker(DockerHook::new(cfg.docker.clone(), mirror.clone())));
+    }
+    // else if cfg.c_group.enable.unwrap() {
+    //     // add cgroup hook
+    //     provider.add_hook(HookType::Cgroup(CGroupHook::new()))
+    // }
 
+    let mut add_hook_from_cmd_list = |cmd_list: Vec<String>, exec_on: u8| {
+        for cmd in cmd_list {
+            match ExecPostHook::new(ExecOn::from_u8(exec_on), &*cmd) {
+                Ok(hook) => provider.add_hook(HookType::ExecPost(hook)),
+                Err(e) => {
+                    let err = format!("初始化mirror {} 失败：{}", mirror.name.clone().unwrap(), e);
+                    error!("{}", err);
+                    panic!("{}", err);
+                }
+            }
+        }
+    };
 
-    unimplemented!()
+    // ExecOnSuccess hook
+    match mirror.exec_on_success.as_ref() {
+        Some(exec_on_success) if !exec_on_success.is_empty() => {
+            add_hook_from_cmd_list(exec_on_success.clone(), ExecOn::Success.as_u8());
+        }
+        _ => {
+            add_hook_from_cmd_list(cfg.global.exec_on_success.clone().unwrap_or_default(), 
+                                   ExecOn::Success.as_u8());
+        }
+    }
+    add_hook_from_cmd_list(mirror.exec_on_success_extra.clone().unwrap_or_default(),
+                           ExecOn::Success.as_u8());
+
+    // ExecOnFailure hook
+    match mirror.exec_on_failure.as_ref() {
+        Some(exec_on_failure) if !exec_on_failure.is_empty() => {
+            add_hook_from_cmd_list(exec_on_failure.clone(), ExecOn::Failure.as_u8());
+        }
+        _ => {
+            add_hook_from_cmd_list(cfg.global.exec_on_failure.clone().unwrap_or_default(),
+                                   ExecOn::Failure.as_u8());
+        }
+    }
+    add_hook_from_cmd_list(mirror.exec_on_failure_extra.clone().unwrap_or_default(),
+                           ExecOn::Failure.as_u8());
+
+    
+    provider
 }

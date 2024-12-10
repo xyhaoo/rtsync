@@ -8,7 +8,9 @@ use log::debug;
 use crate::context::Context;
 use crate::hooks::{EmptyHook, JobHook};
 use crate::provider::{MirrorProvider, _LOG_FILE_KEY};
+use anymap::AnyMap;
 
+#[derive(Debug, Clone)]
 pub(crate) struct LogLimiter{}
 
 impl LogLimiter {
@@ -20,14 +22,13 @@ impl LogLimiter {
 
 
 impl JobHook for LogLimiter{
-    type ContextStoreVal = String;
 
     fn pre_exec(&self,
                 provider_name: String,
                 log_dir: String, 
                 log_file: String, 
                 working_dir: String, 
-                context: &Arc<Mutex<Option<Context<Self::ContextStoreVal>>>>) 
+                context: &Arc<Mutex<Option<Context>>>) 
         -> Result<(), Box<dyn Error>> 
     {
         debug!("为 {} 执行日志限制器", provider_name);
@@ -88,18 +89,20 @@ impl JobHook for LogLimiter{
 
         let mut cur_ctx = context.lock().unwrap();
         if let Some(ctx) = cur_ctx.as_mut(){
-            ctx.set(_LOG_FILE_KEY.to_string(), log_file_path.display().to_string());
+            let mut value = AnyMap::new();
+            value.insert(log_file_path.display().to_string());
+            ctx.set(_LOG_FILE_KEY.to_string(), value);
         }
         Ok(())
     }
     
     fn post_exec(&self, 
-                 context: &Arc<Mutex<Option<Context<Self::ContextStoreVal>>>>,
+                 context: &Arc<Mutex<Option<Context>>>,
                  _provider_name: String) 
         -> Result<(), Box<dyn Error>> 
     {
         let mut cur_ctx = context.lock().unwrap();
-        *cur_ctx = match cur_ctx.to_owned(){
+        *cur_ctx = match cur_ctx.take(){
             Some(ctx) => {
                 match ctx.exit() {
                     Ok(ctx) => Some(ctx),
@@ -117,7 +120,7 @@ impl JobHook for LogLimiter{
                  _upstream: String,
                  log_dir: String,
                  log_file: String,
-                 context: &Arc<Mutex<Option<Context<Self::ContextStoreVal>>>>)
+                 context: &Arc<Mutex<Option<Context>>>)
         -> Result<(), Box<dyn Error>> 
     {
         
@@ -132,7 +135,7 @@ impl JobHook for LogLimiter{
         symlink(&log_file_name, log_link)?;
 
         let mut cur_ctx = context.lock().unwrap();
-        *cur_ctx = match cur_ctx.to_owned(){
+        *cur_ctx = match cur_ctx.take(){
             Some(ctx) => {
                 match ctx.exit() {
                     Ok(ctx) => Some(ctx),
@@ -145,4 +148,6 @@ impl JobHook for LogLimiter{
     }
     
 }
+
+
 

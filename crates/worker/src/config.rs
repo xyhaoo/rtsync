@@ -33,22 +33,22 @@ where
 }
 
 //Config代表worker配置选项
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Clone)]
 #[serde(default)]
 pub(crate) struct Config {
     pub(crate) global: GlobalConfig,
     pub(crate) manager: ManagerConfig,
     pub(crate) server: ServerConfig,
-    c_group: CGroupConfig,
-    zfs: ZFSConfig,
-    btrfs_snapshot: BtrfsSnapshotConfig,
-    docker: DockerConfig,
+    pub(crate) c_group: CGroupConfig,
+    pub(crate) zfs: ZFSConfig,
+    pub(crate) btrfs_snapshot: BtrfsSnapshotConfig,
+    pub(crate) docker: DockerConfig,
     include: IncludeConfig,
     mirrors_config: Vec<MirrorConfig>,
     pub(crate) mirrors: Vec<MirrorConfig>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Clone)]
 #[serde(default)]
 pub(crate) struct GlobalConfig {
     pub(crate) name: Option<String>,
@@ -59,11 +59,11 @@ pub(crate) struct GlobalConfig {
     pub(crate) retry: Option<i64>,
     pub(crate) timeout: Option<i64>,
 
-    exec_on_success: Option<Vec<String>>,
-    exec_on_failure: Option<Vec<String>>,
+    pub(crate) exec_on_success: Option<Vec<String>>,
+    pub(crate) exec_on_failure: Option<Vec<String>>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Clone)]
 #[serde(default)]
 pub(crate) struct ManagerConfig{
     pub(crate) api_base: Option<String>,
@@ -88,7 +88,7 @@ impl ManagerConfig {
     }
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Clone)]
 #[serde(default)]
 pub(crate) struct ServerConfig {
     pub(crate) hostname: Option<String>,
@@ -98,10 +98,10 @@ pub(crate) struct ServerConfig {
     ssl_key: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Clone)]
 #[serde(default)]
 pub(crate) struct CGroupConfig {
-    enabled: Option<bool>,
+    pub(crate) enable: Option<bool>,
     base_path: Option<String>,
     pub(crate) group: Option<String>,
     sub_system: Option<String>,
@@ -110,29 +110,29 @@ pub(crate) struct CGroupConfig {
     pub(crate) cg_mgr_v2: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Clone)]
 #[serde(default)]
-struct ZFSConfig {
-    enable: Option<bool>,
-    z_pool: Option<String>,
+pub(crate) struct ZFSConfig {
+    pub(crate) enable: Option<bool>,
+    pub(crate) z_pool: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Clone)]
 #[serde(default)]
-struct BtrfsSnapshotConfig {
-    enable: Option<bool>,
-    snapshot_path: Option<String>,
+pub(crate) struct BtrfsSnapshotConfig {
+    pub(crate) enable: Option<bool>,
+    pub(crate) snapshot_path: Option<String>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Clone)]
 #[serde(default)]
 pub struct DockerConfig {
-    enable: Option<bool>,
+    pub(crate) enable: Option<bool>,
     pub(crate) volumes: Option<Vec<String>>,
     pub(crate) options: Option<Vec<String>>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default, Deserialize, Clone)]
 #[serde(default)]
 struct IncludeConfig {
     include_mirrors: Option<String>,

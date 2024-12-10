@@ -9,6 +9,7 @@ use std::process::Command;
 use std::sync::atomic::Ordering;
 use crossbeam_channel::{bounded, Sender};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
+use anymap::AnyMap;
 use chrono::Duration;
 use crate::base_provider::BaseProvider;
 use lazy_static::lazy_static;
@@ -18,10 +19,9 @@ use internal::util::extract_size_from_rsync_log;
 use crate::common::{Empty, DEFAULT_MAX_RETRY};
 use crate::config::ProviderEnum;
 use crate::context::Context;
-use crate::hooks::JobHook;
+use crate::hooks::{HookType, JobHook};
 use crate::provider::{MirrorProvider, _LOG_DIR_KEY, _LOG_FILE_KEY, _WORKING_DIR_KEY};
 use crate::runner::CmdJob;
-use crate::base_provider::HookType;
 
 #[derive(Clone)]
 pub(crate) struct TwoStageRsyncConfig {
@@ -52,8 +52,8 @@ pub(crate) struct TwoStageRsyncConfig {
 }
 
 // RsyncProvider提供了基于rsync的同步作业的实现
-pub(crate) struct TwoStageRsyncProvider<T: Clone> {
-    pub(crate) base_provider: BaseProvider<T>,
+pub(crate) struct TwoStageRsyncProvider {
+    pub(crate) base_provider: BaseProvider,
     two_stage_rsync_config: TwoStageRsyncConfig,
     stage1_options: Vec<String>,
     stage2_options: Vec<String>,
@@ -83,7 +83,8 @@ lazy_static! {
         .cloned()
         .collect();
 }
-impl TwoStageRsyncProvider<String> {
+
+impl TwoStageRsyncProvider {
     pub(crate) fn new(mut c: TwoStageRsyncConfig) -> Result<Self, Box<dyn Error>>{
         // TODO: 检查config选项
         if c.retry == 0{
@@ -129,9 +130,17 @@ impl TwoStageRsyncProvider<String> {
             provider.two_stage_rsync_config.rsync_cmd = "rsync".to_string();
         }
         if let Some(ctx) = provider.base_provider.ctx.lock().unwrap().as_mut(){
-            ctx.set(_WORKING_DIR_KEY.to_string(), c.working_dir);
-            ctx.set(_LOG_DIR_KEY.to_string(), c.log_dir);
-            ctx.set(_LOG_FILE_KEY.to_string(), c.log_file);
+            let mut value = AnyMap::new();
+            value.insert(c.working_dir);
+            ctx.set(_WORKING_DIR_KEY.to_string(), value);
+
+            let mut value = AnyMap::new();
+            value.insert(c.log_dir);
+            ctx.set(_LOG_DIR_KEY.to_string(), value);
+
+            let mut value = AnyMap::new();
+            value.insert(c.log_file);
+            ctx.set(_LOG_FILE_KEY.to_string(), value);
         }
 
         Ok(provider)
@@ -189,9 +198,9 @@ impl TwoStageRsyncProvider<String> {
     fn cmd(&mut self, cmd_and_args: Vec<String>, working_dir: String, env: HashMap<String, String>){
         let mut cmd_job: CmdJob;
         let mut args: Vec<String> = Vec::new();
-        let use_docker = self.docker().is_some();
+        let use_docker = self.base_provider.docker_ref().is_some();
 
-        if let Some(d) = self.docker(){
+        if let Some(d) = self.base_provider.docker_ref(){
             let c = "docker";
             args.extend(vec!["run".to_string(), "--rm".to_string(),
                              "-a".to_string(), "STDOUT".to_string(), "-a".to_string(), "STDERR".to_string(),
@@ -304,8 +313,7 @@ impl TwoStageRsyncProvider<String> {
 }
 
 
-impl MirrorProvider for TwoStageRsyncProvider<String> {
-    type ContextStoreVal = String;
+impl MirrorProvider for TwoStageRsyncProvider {
 
     fn upstream(&self) -> String {
         self.two_stage_rsync_config.upstream_url.clone()
@@ -374,6 +382,14 @@ impl MirrorProvider for TwoStageRsyncProvider<String> {
 
     fn add_hook(&mut self, hook: HookType) {
         self.base_provider.add_hook(hook);
+    }
+
+    fn log_dir(&self) -> String {
+        self.base_provider.log_dir()
+    }
+
+    fn log_file(&self) -> String {
+        self.base_provider.log_file()
     }
 }
 

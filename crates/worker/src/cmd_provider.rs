@@ -9,6 +9,7 @@ use crossbeam_channel::bounded;
 use crossbeam_channel::Sender;
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::sync::atomic::Ordering;
+use anymap::AnyMap;
 use chrono::{DateTime, Duration, Utc};
 use libc::{getgid, getuid};
 use log::{debug, error, info, warn};
@@ -16,12 +17,13 @@ use nix::sys::signal::{kill, Signal};
 use nix::unistd::Pid;
 use regex::Regex;
 use shlex::Shlex;
-use crate::base_provider::{BaseProvider, HookType};
+use crate::base_provider::{BaseProvider};
 use crate::common::{Empty, DEFAULT_MAX_RETRY};
 use crate::config::ProviderEnum;
 use crate::context::Context;
 use crate::provider::{MirrorProvider, _LOG_DIR_KEY, _LOG_FILE_KEY, _WORKING_DIR_KEY};
 use internal::util::{find_all_submatches_in_file, extract_size_from_log};
+use crate::hooks::HookType;
 use crate::runner::{err_process_not_started, CmdJob};
 
 #[derive(Clone)]
@@ -43,8 +45,8 @@ pub(crate) struct CmdConfig{
     pub(crate) size_pattern: String,
 }
 
-pub(crate) struct CmdProvider<T: Clone>{
-    pub(crate) base_provider: BaseProvider<T>,
+pub(crate) struct CmdProvider{
+    pub(crate) base_provider: BaseProvider,
     cmd_config: CmdConfig,
     command: Vec<String>,
     data_size: String,
@@ -53,7 +55,7 @@ pub(crate) struct CmdProvider<T: Clone>{
 
 }
 // 
-impl CmdProvider<String>{
+impl CmdProvider{
     pub(crate) fn new(mut c: CmdConfig) -> Result<Self, Box<dyn Error>>{
         // TODO: 检查config选项
         if c.retry == 0{
@@ -84,9 +86,17 @@ impl CmdProvider<String>{
             size_pattern: None,
         };
         if let Some(ctx) = provider.base_provider.ctx.lock().unwrap().as_mut(){
-            ctx.set(_WORKING_DIR_KEY.to_string(), c.working_dir);
-            ctx.set(_LOG_DIR_KEY.to_string(), c.log_dir);
-            ctx.set(_LOG_FILE_KEY.to_string(), c.log_file);
+            let mut value = AnyMap::new();
+            value.insert(c.working_dir);
+            ctx.set(_WORKING_DIR_KEY.to_string(), value);
+
+            let mut value = AnyMap::new();
+            value.insert(c.log_dir);
+            ctx.set(_LOG_DIR_KEY.to_string(), value);
+
+            let mut value = AnyMap::new();
+            value.insert(c.log_file);
+            ctx.set(_LOG_FILE_KEY.to_string(), value);
         }
         let cmd: Vec<String> = Shlex::new(&*c.command).collect();
         if cmd.len() == 0 {
@@ -133,11 +143,11 @@ impl CmdProvider<String>{
 
         let mut cmd_job: CmdJob;
         let mut args: Vec<String> = Vec::new();
-        let use_docker = self.docker().is_some();
+        let use_docker = self.base_provider.docker_ref().is_some();
 
         let working_dir = self.base_provider.working_dir();
         
-        if let Some(d) = self.docker(){
+        if let Some(d) = self.base_provider.docker_ref(){
             let c = "docker";
             args.extend(vec!["run".to_string(), "--rm".to_string(),
                              "-a".to_string(), "STDOUT".to_string(), "-a".to_string(), "STDERR".to_string(),
@@ -262,7 +272,7 @@ impl CmdProvider<String>{
             if cmd.cmd.get_program().eq("") || cmd.result.is_none(){
                 return Err(err_process_not_started())
             }
-            if let Some(d) = self.docker(){
+            if let Some(d) = self.base_provider.docker_ref(){
                 Command::new("docker")
                     .arg("stop")
                     .arg("-t")
@@ -295,10 +305,9 @@ impl CmdProvider<String>{
     }
     
 }
-impl<T: Clone> CmdProvider<T> {}
 
-impl MirrorProvider for CmdProvider<String>{
-    type ContextStoreVal = String;
+
+impl MirrorProvider for CmdProvider{
 
     fn upstream(&self) -> String {
         self.cmd_config.upstream_url.clone()
@@ -358,6 +367,14 @@ impl MirrorProvider for CmdProvider<String>{
     
     fn add_hook(&mut self, hook: HookType) {
         self.base_provider.add_hook(hook);
+    }
+
+    fn log_dir(&self) -> String {
+        self.base_provider.log_dir()
+    }
+
+    fn log_file(&self) -> String {
+        self.base_provider.log_file()
     }
 
     fn data_size(&self) -> String {

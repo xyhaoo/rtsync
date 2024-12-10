@@ -9,6 +9,7 @@ use std::process::Command;
 use crossbeam_channel::{Sender, Receiver, bounded};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::sync::atomic::Ordering;
+use anymap::AnyMap;
 use chrono::Duration;
 use libc::{getgid, getuid};
 use log::{debug, error, warn};
@@ -16,14 +17,14 @@ use nix::sys::signal::{kill, Signal};
 use nix::unistd::Pid;
 use internal;
 use internal::util::extract_size_from_rsync_log;
-use crate::base_provider::{BaseProvider, HookType};
+use crate::base_provider::{BaseProvider};
 use crate::cgroup::CGroupHook;
 use crate::common;
 use crate::common::{Empty, DEFAULT_MAX_RETRY};
 use crate::config::ProviderEnum;
 use crate::context::Context;
 use crate::docker::DockerHook;
-use crate::hooks::JobHook;
+use crate::hooks::{HookType, JobHook};
 use crate::provider::{MirrorProvider, _LOG_DIR_KEY, _LOG_FILE_KEY, _WORKING_DIR_KEY};
 use crate::runner::{err_process_not_started, CmdJob};
 use crate::zfs_hook::ZfsHook;
@@ -57,14 +58,14 @@ pub(crate) struct RsyncConfig{
 }
 
 // RsyncProvider提供了基于rsync的同步作业的实现
-pub(crate) struct RsyncProvider<T: Clone> {
-    pub(crate) base_provider: BaseProvider<T>,
+pub(crate) struct RsyncProvider {
+    pub(crate) base_provider: BaseProvider,
     rsync_config: RsyncConfig,
     options: Vec<String>,
     data_size: String,
 }
 
-impl RsyncProvider<String> {
+impl RsyncProvider {
     pub(crate) fn new(mut c: RsyncConfig) -> Result<Self, Box<dyn Error>> {
         // TODO: 检查config选项
         if !c.upstream_url.ends_with("/"){
@@ -139,9 +140,17 @@ impl RsyncProvider<String> {
         }
         provider.options = options;
         if let Some(ctx) = provider.base_provider.ctx.lock().unwrap().as_mut(){
-            ctx.set(_WORKING_DIR_KEY.to_string(), c.working_dir);
-            ctx.set(_LOG_DIR_KEY.to_string(), c.log_dir);
-            ctx.set(_LOG_FILE_KEY.to_string(), c.log_file);
+            let mut value = AnyMap::new();
+            value.insert(c.working_dir);
+            ctx.set(_WORKING_DIR_KEY.to_string(), value);
+            
+            let mut value = AnyMap::new();
+            value.insert(c.log_dir);
+            ctx.set(_LOG_DIR_KEY.to_string(), value);
+            
+            let mut value = AnyMap::new();
+            value.insert(c.log_file);
+            ctx.set(_LOG_FILE_KEY.to_string(), value);
         }
 
         Ok(provider)
@@ -160,9 +169,9 @@ impl RsyncProvider<String> {
         ///////////////////////////////////////
         let mut cmd_job: CmdJob;
         let mut args: Vec<String> = Vec::new();
-        let use_docker = self.docker().is_some();
+        let use_docker = self.base_provider.docker_ref().is_some();
 
-        if let Some(d) = self.docker(){
+        if let Some(d) = self.base_provider.docker_ref(){
             let c = "docker";
             args.extend(vec!["run".to_string(), "--rm".to_string(),
                              "-a".to_string(), "STDOUT".to_string(), "-a".to_string(), "STDERR".to_string(),
@@ -288,7 +297,7 @@ impl RsyncProvider<String> {
             if cmd.cmd.get_program().eq("") || cmd.result.is_none(){
                 return Err(err_process_not_started())
             }
-            if let Some(d) = self.docker(){
+            if let Some(d) = self.base_provider.docker_ref(){
                 Command::new("docker")
                     .arg("stop")
                     .arg("-t")
@@ -319,13 +328,11 @@ impl RsyncProvider<String> {
             panic!("在调用terminate时，无法在BaseProvider的cmd字段上获得锁")
         }
     }
-}
-impl<T: Clone> RsyncProvider<T>  {
+    
     
 }
 
-impl MirrorProvider for RsyncProvider<String>  {
-    type ContextStoreVal = String;
+impl MirrorProvider for RsyncProvider  {
 
     fn upstream(&self) -> String {
         self.rsync_config.upstream_url.clone()
@@ -380,6 +387,14 @@ impl MirrorProvider for RsyncProvider<String>  {
     
     fn add_hook(&mut self, hook: HookType) {
         self.base_provider.add_hook(hook);
+    }
+
+    fn log_dir(&self) -> String {
+        self.base_provider.log_dir()
+    }
+
+    fn log_file(&self) -> String {
+        self.base_provider.log_file()
     }
 
     fn data_size(&self) -> String {

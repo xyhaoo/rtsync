@@ -7,6 +7,7 @@ use crate::provider::MirrorProvider;
 use users;
 use users::get_current_uid;
 
+#[derive(Debug, Clone)]
 pub(crate) struct ZfsHook {
     pub(crate) z_pool: String,
 }
@@ -33,8 +34,6 @@ impl ZfsHook {
     }
 }
 impl JobHook for ZfsHook {
-    type ContextStoreVal = ();
-
     // 检查工作目录是否为ZFS数据集
     fn per_job(&self, working_dir: String, provider_name: String) -> Result<(), Box<dyn Error>> {
         // let working_dir = self.empty_hook.provider.working_dir();
@@ -58,6 +57,8 @@ impl JobHook for ZfsHook {
         Ok(())
     }
 }
+
+
 
 // #[cfg(test)]
 // mod tests {
