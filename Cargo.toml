@@ -22,7 +22,7 @@ members = [
     
     
     
-    "tests/http_test",
+#    "tests/http_test",
 ]
 
 [dependencies]

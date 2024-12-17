@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="RemoteTargetsManager">
+    <targets>
+      <target name="root@39.103.60.164:22" type="ssh/sftp" uuid="e0dde7c1-b7b8-4b66-9f03-696d232ca6be">
+        <config>
+          <option name="projectRootOnTarget" value="/root/documents/rust/rtsync/" />
+          <option name="serverName" value="root@39.103.60.164:22 key" />
+          <option name="useRsync" value="true" />
+        </config>
+        <ContributedStateBase type="RsLanguageRuntime">
+          <config>
+            <option name="cargoPath" value="/root/.cargo/bin/cargo" />
+            <option name="cargoVersion" value="1.82.0 (8f40fc59f 2024-08-21)" />
+            <option name="rustcPath" value="/root/.cargo/bin/rustc" />
+            <option name="rustcVersion" value="error: couldn't read  --version: No such file or directory (os error 2)" />
+          </config>
+        </ContributedStateBase>
+      </target>
+    </targets>
+  </component>
+</project>

@@ -312,22 +312,34 @@ pub fn find_all_submatches_in_file(file_name: &str, re: &Regex) -> Result<Vec<Ve
     }
 
     let content = fs::read_to_string(file_name)?;
-    Ok(re
-        .captures_iter(&content)
-        .map(|cap| 
-            cap.iter().skip(1)
-                .filter_map(|m| 
-                    m.map(|m|
-                        m.as_str().to_string()))
-                .collect())
-        .collect())
+    println!("debug: content是: {:?}", content);
+    Ok(re.captures_iter(&*content)
+           .map(|cap| {
+               (0..cap.len())  // 捕获组的数量
+                   .map(|i| {
+                       // 获取捕获组的内容，如果没有匹配则填充空字符串
+                       cap.get(i).map_or("".to_string(), |m| m.as_str().to_string())
+                   })
+                   .collect()
+           })
+           .collect())
+    
+    /*
+    "(\d+)-(\d+)-(\d+)"
+    "2024-12-17\n2025-01-01\n2023-11-30";
+    ["2024-12-17", "2024", "12", "17"]
+    ["2025-01-01", "2025", "01", "01"]
+    ["2023-11-30", "2023", "11", "30"]
+     */
 }
 
 // Extract size from a log file using regex 
 pub fn extract_size_from_log(log_file: &str, re: &Regex) -> Option<String> {
     match find_all_submatches_in_file(log_file, re) {
         Ok(matches) if !matches.is_empty() => { 
-            matches.last().and_then(|m| m.get(0).cloned()) 
+            println!("debug: matches: {:?}", matches);
+            // 最后一个匹配项的第一个子捕获组
+            matches.last().and_then(|m| m.get(1).cloned()) 
         },
         _ => None,
     }
@@ -342,8 +354,10 @@ pub fn extract_size_from_rsync_log(log_file: &str) -> Option<String> {
 // Test rsync command error handling
 pub fn translate_rsync_error_code(exit_code: i32) -> Option<String>{
     if let Some(msg) = rsync_exit_values.get(&exit_code) {
-        eprintln!("rsync error: {}", msg);
-        Some(msg.to_string());
+        let error = format!("rsync error: {}", msg.to_string());
+        // 直接返回一个&&str可能得不到结果， 而且不写return为啥不回返回。。
+        // Some(msg.to_string());
+        return Some(error)
     }
     None
 }

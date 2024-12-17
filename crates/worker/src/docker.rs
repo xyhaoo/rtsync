@@ -110,8 +110,10 @@ impl JobHook for DockerHook {
         -> Result<(), Box<dyn Error>>
     {
         // Command::new("docker")
-        //  .args(["rm", "-f", self.name()])
-        //  .status()
+        //     .args(["rm", "-f", &provider_name])
+        //     .output()
+        //     .unwrap();
+        
         let name = self.name(provider_name);
         let mut retry = 10;
         loop{

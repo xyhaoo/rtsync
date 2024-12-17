@@ -6,7 +6,7 @@ use std::fs::Permissions;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use crossbeam_channel::{bounded, Sender};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 use anymap::AnyMap;
@@ -23,7 +23,7 @@ use crate::hooks::{HookType, JobHook};
 use crate::provider::{MirrorProvider, _LOG_DIR_KEY, _LOG_FILE_KEY, _WORKING_DIR_KEY};
 use crate::runner::CmdJob;
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub(crate) struct TwoStageRsyncConfig {
     pub(crate) name: String,
     pub(crate) rsync_cmd: String,
@@ -54,11 +54,15 @@ pub(crate) struct TwoStageRsyncConfig {
 // RsyncProvider提供了基于rsync的同步作业的实现
 pub(crate) struct TwoStageRsyncProvider {
     pub(crate) base_provider: BaseProvider,
-    two_stage_rsync_config: TwoStageRsyncConfig,
+    pub(crate) two_stage_rsync_config: TwoStageRsyncConfig,
     stage1_options: Vec<String>,
     stage2_options: Vec<String>,
     data_size: String,
 }
+
+unsafe impl Send for TwoStageRsyncProvider{}
+unsafe impl Sync for TwoStageRsyncProvider{}
+
 // 引用自: https://salsa.debian.org/mirror-team/archvsync/-/blob/master/bin/ftpsync#L431
 lazy_static! {
     static ref  rsync_stage1_profiles: HashMap<&'static str, Vec<&'static str>> = [
@@ -101,7 +105,7 @@ impl TwoStageRsyncProvider {
                 is_master: false,
                 cmd: None,
                 log_file_fd: None,
-                is_running: None,
+                is_running: Some(Arc::new(AtomicBool::new(false))),
                 cgroup: None,
                 zfs: None,
                 docker: None,
@@ -234,47 +238,51 @@ impl TwoStageRsyncProvider {
 
 
             cmd_job = CmdJob{
-                cmd: Command::new(c),
-                result: None,
+                cmd: RwLock::new(Command::new(c)),
+                result: RwLock::new(None),
                 working_dir: working_dir.clone(),
                 env: env.clone(),
                 log_file: None,
-                finished: Mutex::new(bounded(1).1),
+                finished: RwLock::new(None),
                 ret_err: None,
             };
-            cmd_job.cmd.args(&args);
+            { cmd_job.cmd.write().unwrap().args(&args); }
 
         }else {
             if cmd_and_args.len() == 1{
+                // cmd修改与rsync_provider相同
                 cmd_job = CmdJob{
-                    cmd: Command::new(&cmd_and_args[0]),
-                    result: None,
+                    cmd: RwLock::new(Command::new(&cmd_and_args[0])),
+                    result: RwLock::new(None),
                     working_dir: self.working_dir().clone(),
                     env: env.clone(),
                     log_file: None,
-                    finished: Mutex::new(bounded(1).1),
+                    finished: RwLock::new(None),
                     ret_err: None,
                 };
+                
             }else if cmd_and_args.len() > 1 {
+                // cmd修改与rsync_provider相同
                 let c = cmd_and_args[0].clone();
                 let args = cmd_and_args[1..].to_vec();
                 cmd_job = CmdJob{
-                    cmd: Command::new(c),
-                    result: None,
+                    cmd: RwLock::new(Command::new(c)),
+                    result: RwLock::new(None),
                     working_dir: self.working_dir().clone(),
                     env: env.clone(),
                     log_file: None,
-                    finished: Mutex::new(bounded(1).1),
+                    finished: RwLock::new(None),
                     ret_err: None,
                 };
-                cmd_job.cmd.args(&args);
+                { cmd_job.cmd.write().unwrap().args(&args); }
+                
             }else {
                 panic!("命令的长度最少是1！")
             }
         }
 
         if !use_docker {
-            debug!("在 {} 位置执行 {} 命令", cmd_and_args[0], &working_dir);
+            debug!("在 {} 位置执行 {} 命令", &working_dir, cmd_and_args[0]);
 
             // 如果目录不存在，则创建目录
             if let Err(err) = fs::read_dir(&working_dir) {
@@ -289,32 +297,29 @@ impl TwoStageRsyncProvider {
                     }
                 }
             }
-            cmd_job.cmd.current_dir(&working_dir);
-            cmd_job.cmd.envs(crate::runner::new_environ(&env, true));
+            {
+                cmd_job.cmd.write().unwrap()
+                    .current_dir(&working_dir)
+                    .envs(crate::runner::new_environ(env, true));
+            }
         }
 
-        self.base_provider.cmd = Some(Arc::new(RwLock::new(cmd_job)));
+        self.base_provider.cmd = Some(cmd_job);
         ///////////////////////////////////////
         
     }
 
-    /// start操作base_provider字段中的cmd字段，使用的是非阻塞的spawn
+    /// 启动配置好的命令
     fn start(&mut self) -> Result<(), Box<dyn Error>>{
-        if let Ok(mut c) = self.base_provider.cmd.as_mut().unwrap().write(){
-            debug!("命令启动：{:?}", c.cmd.get_args().collect::<Vec<&OsStr>>());
-            c.finished = Mutex::new(bounded(1).1);
-
-            if let Err(e) = c.cmd.spawn(){
-                return Err(Box::new(e))
-            }
-        }
-        Ok(())
+        self.base_provider.start()
     }
 }
 
 
 impl MirrorProvider for TwoStageRsyncProvider {
-
+    fn name(&self) -> String {
+        self.base_provider.name()
+    }
     fn upstream(&self) -> String {
         self.two_stage_rsync_config.upstream_url.clone()
     }
@@ -322,7 +327,6 @@ impl MirrorProvider for TwoStageRsyncProvider {
     fn r#type(&self) -> ProviderEnum {
         ProviderEnum::TwoStageRsync
     }
-
     fn run(&mut self, started: Sender<Empty>) -> Result<(), Box<dyn Error>> {
         if self.is_running(){
             return Err("provider现在正在运行".into())
@@ -342,12 +346,10 @@ impl MirrorProvider for TwoStageRsyncProvider {
 
             self.cmd(command, self.base_provider.working_dir(), self.two_stage_rsync_config.rsync_env.clone());
 
-            if let Err(e) = self.base_provider.prepare_log_file(stage>1){
-                return Err(e);
-            }
-            if let Err(e) = self.start(){
-                return Err(e);
-            }
+            self.base_provider.prepare_log_file(stage>1)?;
+            
+            self.start()?;
+            
             self.base_provider.is_running.as_mut().unwrap().store(true, Ordering::SeqCst);
             debug!("将is_running字段设置为true :{}", self.base_provider.name());
             
@@ -375,14 +377,33 @@ impl MirrorProvider for TwoStageRsyncProvider {
         Ok(())
     }
 
-
-    fn data_size(&self) -> String {
-        self.data_size.clone()
+    fn terminate(&self) -> Result<(), Box<dyn Error>> {
+        self.base_provider.terminate()
     }
 
+    fn is_running(&self) -> bool {
+        self.base_provider.is_running()
+    }
     fn add_hook(&mut self, hook: HookType) {
         self.base_provider.add_hook(hook);
     }
+
+    fn hooks(&self) -> &Vec<Box<dyn JobHook>> {
+        self.base_provider.hooks()
+    }
+
+    fn interval(&self) -> Duration {
+        self.base_provider.interval()
+    }
+
+    fn timeout(&self) -> Duration {
+        self.base_provider.timeout()
+    }
+
+    fn working_dir(&self) -> String {
+        self.base_provider.working_dir()
+    }
+
 
     fn log_dir(&self) -> String {
         self.base_provider.log_dir()
@@ -390,6 +411,22 @@ impl MirrorProvider for TwoStageRsyncProvider {
 
     fn log_file(&self) -> String {
         self.base_provider.log_file()
+    }
+
+    fn data_size(&self) -> String {
+        self.data_size.clone()
+    }
+
+    fn enter_context(&mut self) -> Arc<Mutex<Option<Context>>> {
+        self.base_provider.enter_context()
+    }
+
+    fn exit_context(&mut self) -> Arc<Mutex<Option<Context>>> {
+        self.base_provider.exit_context()
+    }
+
+    fn context(&self) -> Arc<Mutex<Option<Context>>> {
+        self.base_provider.context()
     }
 }
 

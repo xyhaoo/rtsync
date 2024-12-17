@@ -92,7 +92,9 @@ impl ExecPostHook {
 
 impl JobHook for ExecPostHook{
 
-    fn post_success(&self, provider_name: String,
+    fn post_success(&self,
+                    _context: &Arc<Mutex<Option<Context>>>,
+                    provider_name: String,
                     working_dir: String,
                     upstream: String,
                     log_dir: String,

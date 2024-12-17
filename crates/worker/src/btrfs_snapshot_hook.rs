@@ -88,6 +88,7 @@ impl JobHook for BtrfsSnapshotHook {
 
     // 创建新的快照，如果旧快照存在，将其删除
     fn post_success(&self,
+                    _context: &Arc<Mutex<Option<Context>>>,
                     _provider_name: String,
                     working_dir: String,
                     _upstream: String,

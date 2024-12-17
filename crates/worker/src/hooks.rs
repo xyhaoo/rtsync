@@ -4,7 +4,8 @@ use crate::context::Context;
 use enum_dispatch::enum_dispatch;
 #[cfg(target_os = "linux")]
 use crate::btrfs_snapshot_hook;
-use crate::{btrfs_snapshot_hook, btrfs_snapshot_hook_nolinux};
+#[cfg(not(target_os = "linux"))]
+use crate::{btrfs_snapshot_hook_nolinux};
 use crate::cgroup::CGroupHook;
 use crate::docker::DockerHook;
 use crate::exec_post_hook::ExecPostHook;
@@ -38,7 +39,8 @@ pub(crate) trait JobHook{
                  _provider_name: String) 
         -> Result<(), Box<dyn Error>> {Ok(())}
     
-    fn post_success(&self, 
+    fn post_success(&self,
+                    _context: &Arc<Mutex<Option<Context>>>, 
                     _provider_name: String,
                     _working_dir: String,
                     _upstream: String,
@@ -74,6 +76,7 @@ macro_rules! impl_into_box_for {
 }
 #[cfg(target_os = "linux")]
 impl_into_box_for!(btrfs_snapshot_hook::BtrfsSnapshotHook);
+#[cfg(not(target_os = "linux"))]
 impl_into_box_for!(btrfs_snapshot_hook_nolinux::BtrfsSnapshotHook);
 impl_into_box_for!(CGroupHook);
 impl_into_box_for!(DockerHook);
@@ -85,6 +88,7 @@ impl_into_box_for!(ZfsHook);
 pub(crate) enum HookType{
     #[cfg(target_os = "linux")]
     Btrfs(btrfs_snapshot_hook::BtrfsSnapshotHook),
+    #[cfg(not(target_os = "linux"))]
     BtrfsNoLinux(btrfs_snapshot_hook_nolinux::BtrfsSnapshotHook),
     Cgroup(CGroupHook),
     Docker(DockerHook),

@@ -8,7 +8,7 @@ use std::process::Command;
 use crossbeam_channel::bounded;
 use crossbeam_channel::Sender;
 use std::sync::{mpsc, Arc, Mutex, RwLock};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use anymap::AnyMap;
 use chrono::{DateTime, Duration, Utc};
 use libc::{getgid, getuid};
@@ -23,10 +23,11 @@ use crate::config::ProviderEnum;
 use crate::context::Context;
 use crate::provider::{MirrorProvider, _LOG_DIR_KEY, _LOG_FILE_KEY, _WORKING_DIR_KEY};
 use internal::util::{find_all_submatches_in_file, extract_size_from_log};
-use crate::hooks::HookType;
+use crate::hooks::{HookType, JobHook};
 use crate::runner::{err_process_not_started, CmdJob};
+use crate::zfs_hook::ZfsHook;
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub(crate) struct CmdConfig{
     pub(crate) name: String,
 
@@ -47,14 +48,17 @@ pub(crate) struct CmdConfig{
 
 pub(crate) struct CmdProvider{
     pub(crate) base_provider: BaseProvider,
-    cmd_config: CmdConfig,
+    pub(crate) cmd_config: CmdConfig,
     command: Vec<String>,
     data_size: String,
     fail_on_match: Option<Regex>,
     size_pattern: Option<Regex>,
 
 }
-// 
+unsafe impl Send for CmdProvider {}
+unsafe impl Sync for CmdProvider {}
+
+//
 impl CmdProvider{
     pub(crate) fn new(mut c: CmdConfig) -> Result<Self, Box<dyn Error>>{
         // TODO: 检查config选项
@@ -72,7 +76,7 @@ impl CmdProvider{
                 is_master: false,
                 cmd: None,
                 log_file_fd: None,
-                is_running: None,
+                is_running: Some(Arc::new(AtomicBool::new(false))),
                 cgroup: None,
                 zfs: None,
                 docker: None,
@@ -85,7 +89,7 @@ impl CmdProvider{
             fail_on_match: None,
             size_pattern: None,
         };
-        if let Some(ctx) = provider.base_provider.ctx.lock().unwrap().as_mut(){
+        if let Some(ctx) = provider.context().lock().unwrap().as_mut(){
             let mut value = AnyMap::new();
             value.insert(c.working_dir);
             ctx.set(_WORKING_DIR_KEY.to_string(), value);
@@ -102,6 +106,9 @@ impl CmdProvider{
         if cmd.len() == 0 {
             return Err("未检测到命令".into())
         }
+
+        println!("provider.cmd: {:?}", cmd);
+
         provider.command = cmd;
         if c.fail_on_match.len() > 0{
             match Regex::new(&*c.fail_on_match) {
@@ -109,6 +116,7 @@ impl CmdProvider{
                     return Err(format!("匹配正则表达式fail_on_match失败：{}", e).into())
                 }
                 Ok(fail_on_match) => {
+                    println!("debug：初始化regix成功：{:?}", fail_on_match);
                     provider.fail_on_match = Some(fail_on_match);
                 }
             }
@@ -119,6 +127,7 @@ impl CmdProvider{
                     return Err(format!("匹配正则表达式size_pattern失败：{}", e).into())
                 }
                 Ok(size_pattern) => {
+                    println!("debug: size_pattern regex初始化成功{:?}", size_pattern);
                     provider.size_pattern = Some(size_pattern);
                 }
             }
@@ -150,7 +159,7 @@ impl CmdProvider{
         if let Some(d) = self.base_provider.docker_ref(){
             let c = "docker";
             args.extend(vec!["run".to_string(), "--rm".to_string(),
-                             "-a".to_string(), "STDOUT".to_string(), "-a".to_string(), "STDERR".to_string(),
+                             // "-a".to_string(), "STDOUT".to_string(), "-a".to_string(), "STDERR".to_string(),
                              "--name".to_string(), self.base_provider.name().parse().unwrap(),
                              "-w".to_string(), working_dir.clone()]);
             // 指定用户
@@ -181,47 +190,47 @@ impl CmdProvider{
 
 
             cmd_job = CmdJob{
-                cmd: Command::new(c),
-                result: None,
+                cmd: RwLock::new(Command::new(c)),
+                result: RwLock::new(None),
                 working_dir: working_dir.clone(),
                 env: env.clone(),
                 log_file: None,
-                finished: Mutex::new(bounded(1).1),
+                finished: RwLock::new(None),
                 ret_err: None,
             };
-            cmd_job.cmd.args(&args);
+            { cmd_job.cmd.write().unwrap().args(&args); }
 
         }else {
             if self.command.len() == 1{
                 cmd_job = CmdJob{
-                    cmd: Command::new(&self.command[0]),
-                    result: None,
+                    cmd: RwLock::new(Command::new(&self.command[0])),
+                    result: RwLock::new(None),
                     working_dir: self.working_dir().clone(),
                     env: env.clone(),
                     log_file: None,
-                    finished: Mutex::new(bounded(1).1),
+                    finished: RwLock::new(None),
                     ret_err: None,
                 };
             }else if self.command.len() > 1 {
                 let c = self.command[0].clone();
                 let args = self.command[1..].to_vec();
                 cmd_job = CmdJob{
-                    cmd: Command::new(c),
-                    result: None,
+                    cmd: RwLock::new(Command::new(c)),
+                    result: RwLock::new(None),
                     working_dir: self.working_dir().clone(),
                     env: env.clone(),
                     log_file: None,
-                    finished: Mutex::new(bounded(1).1),
+                    finished: RwLock::new(None),
                     ret_err: None,
                 };
-                cmd_job.cmd.args(&args);
+                { cmd_job.cmd.write().unwrap().args(&args); }
             }else {
                 panic!("命令的长度最少是1！")
             }
         }
 
         if !use_docker {
-            debug!("在 {} 位置执行 {} 命令", self.command[0], &working_dir);
+            debug!("在 {} 位置执行 {} 命令", &working_dir, self.command[0]);
 
             // 如果目录不存在，则创建目录
             if let Err(err) = fs::read_dir(&working_dir) {
@@ -236,103 +245,69 @@ impl CmdProvider{
                     }
                 }
             }
-            cmd_job.cmd.current_dir(&working_dir);
-            cmd_job.cmd.envs(crate::runner::new_environ(&env, true));
+            {
+                cmd_job.cmd.write().unwrap()
+                    .current_dir(&working_dir)
+                    .envs(crate::runner::new_environ(env, true));
+            }
         }
 
-        self.base_provider.cmd = Some(Arc::new(RwLock::new(cmd_job)));
+        self.base_provider.cmd = Some(cmd_job);
         
     }
-    
-    /// start操作base_provider字段中的cmd字段，使用的是非阻塞的spawn
+
+    /// 启动配置好的命令
     fn start(&mut self) -> Result<(), Box<dyn Error>>{
-        if let Ok(mut c) = self.base_provider.cmd.as_mut().unwrap().write(){
-            debug!("命令启动：{:?}", c.cmd.get_args().collect::<Vec<&OsStr>>());
-            c.finished = Mutex::new(bounded(1).1);
-            
-            if let Err(e) = c.cmd.spawn(){
-                return Err(Box::new(e))
-            }
-        }
-        Ok(())
-    }
-    
-    fn terminate(&mut self) -> Result<(), Box<dyn Error>>{
-        if let Ok(mut cmd) = self.base_provider.cmd
-            .as_ref().expect("没有cmd字段").write()
-        {
-            debug!("正在终止provider：{}", self.base_provider.name());
-            if !self.base_provider.is_running(){
-                warn!("调用了终止函数，但是此时没有检测到 {} 正在运行", self.base_provider.name());
-                return Ok(())
-            }
-
-            /////////////////////////////////
-            // cmd的terminate方法
-            if cmd.cmd.get_program().eq("") || cmd.result.is_none(){
-                return Err(err_process_not_started())
-            }
-            if let Some(d) = self.base_provider.docker_ref(){
-                Command::new("docker")
-                    .arg("stop")
-                    .arg("-t")
-                    .arg("2")
-                    .arg(self.base_provider.name())
-                    .output()?;
-                return Ok(())
-            }
-            if let Some(child) = cmd.result.as_mut(){
-                // 发送 SIGTERM 信号
-                let pid = Pid::from_raw(child.id() as i32); // 获取子进程的 PID
-                if let Err(e) = kill(pid, Signal::SIGTERM){
-                    return Err(e.into())
-                }
-                // 等待 2 秒
-                thread::sleep(core::time::Duration::from_secs(2));
-
-                // 如果子进程仍在运行，则发送 SIGKILL 信号强制退出
-                if let None = child.try_wait().ok().flatten() {
-                    kill(pid, Signal::SIGKILL).expect("发送SIGKILL信号失败");
-                    warn!("对进程发送了SIGTERM信号，但是其未在两秒内退出，所以发送了SIGKILL信号");
-                }
-            }
-
-            Ok(())
-            /////////////////////////////////
-        }else {
-            panic!("在调用terminate时，无法在BaseProvider的cmd字段上获得锁")
-        }
+        self.base_provider.start()
     }
     
 }
 
 
 impl MirrorProvider for CmdProvider{
+    fn name(&self) -> String {
+        self.base_provider.name()
+    }
 
     fn upstream(&self) -> String {
         self.cmd_config.upstream_url.clone()
     }
-    
+
     fn r#type(&self) -> ProviderEnum {
         ProviderEnum::Command
     }
-    
+
     fn run(&mut self, started: Sender<Empty>) -> Result<(), Box<dyn Error>> {
         self.data_size = "".to_string();
-        if let Err(e) = MirrorProvider::start(self){
-            return Err(e);
-        }
+
+        println!("debug: 等待启动。。。");
+
+        MirrorProvider::start(self)?;
+        
         started.send(()).expect("发送失败");
-        if let Err(e) = self.base_provider.wait(){
-            return Err(e);
+
+        println!("debug: 等待结束。。。");
+
+        match self.base_provider.wait() {
+            Err(err) => {
+                return Err(err);
+            }
+            Ok(exit_code) if exit_code != 0 => {
+                println!("捕获到非正常退出！状态码：{exit_code}");
+                return Err(format!("错误状态码： {}", exit_code).into());
+            }
+            // 正常退出
+            _ => {}
         }
+        
         if let Some(fail_on_match) = self.fail_on_match.as_ref(){
-            match find_all_submatches_in_file(&*self.base_provider.log_file(), fail_on_match){
-                Ok(mut submatches) => {
-                    info!("在文件中找到所有的子匹配项：{:?}", submatches);
-                    if submatches.len() != 0{
-                        debug!("匹配失败{:?}", submatches);
-                        return Err(format!("匹配正则表达式失败，找到 {} 个匹配项", submatches.len()).into());
+            match find_all_submatches_in_file(&*self.log_file(), fail_on_match){
+                Ok(sub_matches) => {
+                    println!("debug: 找到的匹配项：{:?}", sub_matches);
+                    info!("在文件中找到所有的子匹配项：{:?}", sub_matches);
+                    if sub_matches.len() != 0{
+                        debug!("匹配失败{:?}", sub_matches);
+                        return Err(format!("匹配正则表达式失败，找到 {} 个匹配项", sub_matches.len()).into());
                     }
                 }
                 Err(e) => {
@@ -341,32 +316,58 @@ impl MirrorProvider for CmdProvider{
             }
         }
         if let Some(size_pattern) = self.size_pattern.as_ref(){
-            self.data_size = extract_size_from_log(&*self.base_provider.log_file(), size_pattern)
+            self.data_size = extract_size_from_log(&*self.log_file(), size_pattern)
                 .unwrap_or_default();
+            println!("debug: 找到的匹配项：{:?}", self.data_size);
         }
         Ok(())
     }
-    
     fn start(&mut self) -> Result<(), Box<dyn Error>> {
         if self.is_running(){
             return Err("provider现在正在运行".into())
         }
         self.cmd();
-        if let Err(e) = self.base_provider.prepare_log_file(false){
-            return Err(e);
-        }
-        if let Err(e) = self.start(){
-            return Err(e);
-        }
+        
+        self.base_provider.prepare_log_file(false)?;
+
+        self.start()?;
+        
         self.base_provider.is_running.as_mut().unwrap().store(true, Ordering::SeqCst);
+        
+        println!("debug: 将is_running字段设置为true :{}", self.base_provider.name());
+        
         debug!("将is_running字段设置为true :{}", self.base_provider.name());
 
         Ok(())
         
     }
-    
+
+    fn terminate(&self) -> Result<(), Box<dyn Error>> {
+        println!("debug: 进入terminate！");
+        self.base_provider.terminate()
+    }
+
+    fn is_running(&self) -> bool {
+        self.base_provider.is_running()
+    }
     fn add_hook(&mut self, hook: HookType) {
         self.base_provider.add_hook(hook);
+    }
+
+    fn hooks(&self) -> &Vec<Box<dyn JobHook>> {
+        self.base_provider.hooks()
+    }
+
+    fn interval(&self) -> Duration {
+        self.base_provider.interval()
+    }
+
+    fn timeout(&self) -> Duration {
+        self.base_provider.timeout()
+    }
+
+    fn working_dir(&self) -> String {
+        self.base_provider.working_dir()
     }
 
     fn log_dir(&self) -> String {
@@ -379,5 +380,21 @@ impl MirrorProvider for CmdProvider{
 
     fn data_size(&self) -> String {
         self.data_size.clone()
+    }
+
+    fn enter_context(&mut self) -> Arc<Mutex<Option<Context>>> {
+        self.base_provider.enter_context()
+    }
+
+    fn exit_context(&mut self) -> Arc<Mutex<Option<Context>>> {
+        self.base_provider.exit_context()
+    }
+
+    fn context(&self) -> Arc<Mutex<Option<Context>>> {
+        self.base_provider.context()
+    }
+
+    fn zfs(&self) -> Option<&ZfsHook> {
+        self.base_provider.zfs.as_ref()
     }
 }

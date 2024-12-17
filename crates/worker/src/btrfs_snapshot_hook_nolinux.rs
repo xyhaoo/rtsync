@@ -49,6 +49,7 @@ impl JobHook for BtrfsSnapshotHook{
     }
     
     fn post_success(&self,
+                    _context: &Arc<Mutex<Option<Context>>>,
                     _provider_name: String,
                     _working_dir: String,
                     _upstream: String,

@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="WebServers">
+    <option name="servers">
+      <webServer id="47251366-0a5a-4662-b157-b984c90fc1a7" name="MyServer">
+        <fileTransfer rootFolder="/root/documents/rust/rtsync" accessType="SFTP" host="39.103.60.164" port="22" sshConfigId="1e93537b-a944-4a6a-9ba0-cbc9bbcf4c60" sshConfig="root@39.103.60.164:22 key" keyPair="true">
+          <advancedOptions>
+            <advancedOptions dataProtectionLevel="Private" keepAliveTimeout="0" passiveMode="true" shareSSLContext="true" />
+          </advancedOptions>
+        </fileTransfer>
+      </webServer>
+    </option>
+  </component>
+</project>

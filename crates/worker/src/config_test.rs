@@ -123,10 +123,7 @@ use_ipv6 = true
         fs::write(&file_debian, INC_BLOB1)
             .expect("failed to write to tmp file debian.conf");
         // 设置文件权限为 0644
-        let mut perms = fs::metadata(&file_debian)
-            .expect("failed to get metadata").permissions();
-        perms.set_mode(0o644); // 设置权限
-        fs::set_permissions(file_debian, perms).expect("failed to set permissions");
+        fs::set_permissions(file_debian, fs::Permissions::from_mode(0o644)).expect("failed to set permissions");
 
         // 配置ubuntu.conf
         let file_ubuntu = tmp_dir_path.join("ubuntu.conf");
@@ -231,10 +228,7 @@ use_ipv6 = true
         fs::write(&file_nest, INC_BLOB1)
             .expect("failed to write to tmp file nest.conf");
         // 设置文件权限为 0644
-        let mut perms = fs::metadata(&file_nest)
-            .expect("failed to get metadata").permissions();
-        perms.set_mode(0o644); // 设置权限
-        fs::set_permissions(file_nest, perms).expect("failed to set permissions");
+        fs::set_permissions(file_nest, fs::Permissions::from_mode(0o644)).expect("failed to set permissions");
 
         let cfg = load_config(Some(tmp_file_path.to_str().unwrap())).unwrap();
         assert_eq!(cfg.global.name, Some("test_worker".to_string()));

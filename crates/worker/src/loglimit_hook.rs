@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::{fs, io};
+use std::fs::Permissions;
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -44,9 +45,9 @@ impl JobHook for LogLimiter{
                 // 如果目录不存在，则创建目录
                 if err.kind() == io::ErrorKind::NotFound {
                     fs::create_dir_all(path)?;
-                    fs::metadata(&path)
-                        .expect("failed to get metadata").permissions()
-                        .set_mode(0o755); // 设置权限
+                    // 设置权限
+                    fs::set_permissions(&path, Permissions::from_mode(0o755))
+                        .expect("failed to get metadata");
                 } else {
                     return Err(err.into());
                 }
@@ -87,7 +88,14 @@ impl JobHook for LogLimiter{
         // 创建新的符号链接
         symlink(&log_file_name, &log_link)?;
 
+        
         let mut cur_ctx = context.lock().unwrap();
+        
+        *cur_ctx = match cur_ctx.take(){
+            Some(ctx) => Some(ctx.enter()),
+            None => None,
+        };
+        
         if let Some(ctx) = cur_ctx.as_mut(){
             let mut value = AnyMap::new();
             value.insert(log_file_path.display().to_string());
@@ -95,12 +103,14 @@ impl JobHook for LogLimiter{
         }
         Ok(())
     }
-    
-    fn post_exec(&self, 
-                 context: &Arc<Mutex<Option<Context>>>,
-                 _provider_name: String) 
-        -> Result<(), Box<dyn Error>> 
-    {
+
+    fn post_success(&self, 
+                    context: &Arc<Mutex<Option<Context>>>, 
+                    _provider_name: String, 
+                    _working_dir: String, 
+                    _upstream: String, 
+                    _log_dir: String, 
+                    _log_file: String) -> Result<(), Box<dyn Error>> {
         let mut cur_ctx = context.lock().unwrap();
         *cur_ctx = match cur_ctx.take(){
             Some(ctx) => {
@@ -113,6 +123,7 @@ impl JobHook for LogLimiter{
         };
         Ok(())
     }
+    
     
     fn post_fail(&self,
                  _provider_name: String,

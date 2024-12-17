@@ -8,7 +8,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 use crossbeam_channel::{Sender, Receiver, bounded};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use anymap::AnyMap;
 use chrono::Duration;
 use libc::{getgid, getuid};
@@ -29,7 +29,7 @@ use crate::provider::{MirrorProvider, _LOG_DIR_KEY, _LOG_FILE_KEY, _WORKING_DIR_
 use crate::runner::{err_process_not_started, CmdJob};
 use crate::zfs_hook::ZfsHook;
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub(crate) struct RsyncConfig{
     pub(crate) name: String,
     pub(crate) rsync_cmd: String,
@@ -60,10 +60,13 @@ pub(crate) struct RsyncConfig{
 // RsyncProvider提供了基于rsync的同步作业的实现
 pub(crate) struct RsyncProvider {
     pub(crate) base_provider: BaseProvider,
-    rsync_config: RsyncConfig,
+    pub(crate) rsync_config: RsyncConfig,
     options: Vec<String>,
     data_size: String,
 }
+
+unsafe impl Send for RsyncProvider{}
+unsafe impl Sync for RsyncProvider{}
 
 impl RsyncProvider {
     pub(crate) fn new(mut c: RsyncConfig) -> Result<Self, Box<dyn Error>> {
@@ -86,7 +89,7 @@ impl RsyncProvider {
                 is_master: false,
                 cmd: None,
                 log_file_fd: None,
-                is_running: None,
+                is_running: Some(Arc::new(AtomicBool::new(false))),
                 cgroup: None,
                 zfs: None,
                 docker: None,
@@ -96,18 +99,23 @@ impl RsyncProvider {
             options: Vec::new(),
             data_size: String::default(),
         };
+        // FIXME: ubuntu22.04上如果直接使用脚本文件运行Command则会Text file busy，用bash来运行，使用.arg()添加脚本文件路径来避免文件阻塞
+        // FIXME: 这是ubuntu的问题，根本原因是用来设置script_file权限的文件句柄在ubuntu上没有正常关闭，导致Command使用这个文件运行时显示为已被占用
         if c.rsync_cmd.len() == 0 {
             provider.rsync_config.rsync_cmd = "rsync".to_string();
         }
-        if c.rsync_env.len() == 0 {
-            provider.rsync_config.rsync_env = HashMap::new();
-        }
-        if c.username.len() == 0 {
+        // 不需要，已经被初始化了
+        // if c.rsync_env.len() == 0 {
+        //     provider.rsync_config.rsync_env = HashMap::new();
+        // }
+        if c.username.len() != 0 {
             provider.rsync_config.rsync_env.insert("USER".to_string(), c.username);
         }
-        if c.password.len() == 0{
+        if c.password.len() != 0{
             provider.rsync_config.rsync_env.insert("RSYNC_PASSWORD".to_string(), c.password);
         }
+        
+        // 根据配置填充provider的options字段，作为rsync命令的参数
         let mut options: Vec<String> = vec![
             "-aHvh", "--no-o", "--no-g", "--stats",
             "--filter" , "risk .~tmp~/", "--exclude", ".~tmp~/",
@@ -136,10 +144,11 @@ impl RsyncProvider {
             options.push(c.exclude_file);
         }
         if !c.extra_options.is_empty(){
+            println!("添加extra_options {:?}", c.extra_options.clone());
             options.extend(c.extra_options)
         }
         provider.options = options;
-        if let Some(ctx) = provider.base_provider.ctx.lock().unwrap().as_mut(){
+        if let Some(ctx) = provider.base_provider.context().lock().unwrap().as_mut(){
             let mut value = AnyMap::new();
             value.insert(c.working_dir);
             ctx.set(_WORKING_DIR_KEY.to_string(), value);
@@ -158,13 +167,18 @@ impl RsyncProvider {
     
     /// cmd配置base_provider字段中的cmd字段
     fn cmd(&mut self){
-        let working_dir = self.base_provider.working_dir();
-
+        let working_dir = self.working_dir();
         let mut command = Vec::new();
         command.push(self.rsync_config.rsync_cmd.clone());
+        println!("debug：添加了rsync_cmd：{}", self.rsync_config.rsync_cmd.clone());
         command.extend(self.options.clone());
+        println!("debug：添加了options：{:?}", self.options.clone());
         command.push(self.rsync_config.upstream_url.clone());
+        println!("debug：添加了upstream_url：{:?}", self.rsync_config.upstream_url.clone());
         command.push(working_dir.clone());
+        println!("debug：添加了working_dir：{:?}", working_dir.clone());
+        let env = self.rsync_config.rsync_env.clone();
+        println!("debug：rsync_env ：{:?}", &env);
 
         ///////////////////////////////////////
         let mut cmd_job: CmdJob;
@@ -173,22 +187,26 @@ impl RsyncProvider {
 
         if let Some(d) = self.base_provider.docker_ref(){
             let c = "docker";
+            // --rm 容器在执行完任务后会自动删除
+            // -a 
+            // --name 容器命名
+            // -w 容器内部工作目录
             args.extend(vec!["run".to_string(), "--rm".to_string(),
-                             "-a".to_string(), "STDOUT".to_string(), "-a".to_string(), "STDERR".to_string(),
+                             // "-a".to_string(), "STDOUT".to_string(), "-a".to_string(), "STDERR".to_string(),
                              "--name".to_string(), self.base_provider.name().parse().unwrap(),
                              "-w".to_string(), working_dir.clone()]);
-            // 指定用户
+            // -u 设置容器运行时的用户:用户组
             unsafe {
                 args.extend(vec!["-u".to_string(),
                                  format!("{}:{}",getuid().to_string(), getgid().to_string())]);
             }
-            // 添加卷
+            // -v 添加卷: 把主机的文件或目录挂载到容器内
             for vol in d.volumes.iter(){
                 debug!("数据卷: {}", &vol);
                 args.extend(vec!["-v".to_string(), vol.clone()])
             }
             // 设置环境变量
-            for (key, value) in self.rsync_config.rsync_env.iter(){
+            for (key, value) in env.iter(){
                 let kv = format!("{}={}", key, value);
                 args.extend(vec!["-e".to_string(), kv.clone()])
             }
@@ -205,47 +223,57 @@ impl RsyncProvider {
 
 
             cmd_job = CmdJob{
-                cmd: Command::new(c),
-                result: None,
+                cmd: RwLock::new(Command::new(c)),
+                result: RwLock::new(None),
                 working_dir: working_dir.clone(),
-                env: self.rsync_config.rsync_env.clone(),
+                env: env.clone(),
                 log_file: None,
-                finished: Mutex::new(bounded(1).1),
+                finished: RwLock::new(None),
                 ret_err: None,
             };
-            cmd_job.cmd.args(&args);
+            { cmd_job.cmd.write().unwrap().args(&args); }
 
         }else {
             if command.len() == 1{
                 cmd_job = CmdJob{
-                    cmd: Command::new(&command[0]),
-                    result: None,
+                    // 已证实：ubuntu22.04上如果直接使用脚本文件运行Command则会Text file busy，用bash来运行避免文件阻塞
+                    // 正常运行时cmd: Command::new(&command[0])，把下面cmd_job.cmd.arg(&command[0]);删除
+                    cmd: RwLock::new(Command::new("bash")),
+                    result: RwLock::new(None),
                     working_dir: self.working_dir().clone(),
-                    env: self.rsync_config.rsync_env.clone(),
+                    env: env.clone(),
                     log_file: None,
-                    finished: Mutex::new(bounded(1).1),
+                    finished: RwLock::new(None),
                     ret_err: None,
                 };
+                { cmd_job.cmd.write().unwrap().arg(&command[0]); }
+                
             }else if command.len() > 1 {
+                // 已证实：ubuntu22.04上如果直接使用脚本文件运行Command则会Text file busy，用bash来运行避免文件阻塞
+                // 正常运行时cmd: Command::new(c)，把下面cmd_job.cmd.arg(c)删除
                 let c = command[0].clone();
                 let args = command[1..].to_vec();
                 cmd_job = CmdJob{
-                    cmd: Command::new(c),
-                    result: None,
+                    cmd: RwLock::new(Command::new("bash")),
+                    result: RwLock::new(None),
                     working_dir: self.working_dir().clone(),
-                    env: self.rsync_config.rsync_env.clone(),
+                    env: env.clone(),
                     log_file: None,
-                    finished: Mutex::new(bounded(1).1),
+                    finished: RwLock::new(None),
                     ret_err: None,
                 };
-                cmd_job.cmd.args(&args);
+                {
+                    cmd_job.cmd.write().unwrap()
+                        .arg(c)
+                        .args(&args);
+                }
             }else {
                 panic!("命令的长度最少是1！")
             }
         }
 
         if !use_docker {
-            debug!("在 {} 位置执行 {} 命令", command[0], &working_dir);
+            debug!("在 {} 位置执行 {} 命令", &working_dir, command[0]);
 
             // 如果目录不存在，则创建目录
             if let Err(err) = fs::read_dir(&working_dir) {
@@ -260,79 +288,32 @@ impl RsyncProvider {
                     }
                 }
             }
-            cmd_job.cmd.current_dir(&working_dir);
-            cmd_job.cmd.envs(crate::runner::new_environ(&self.rsync_config.rsync_env, true));
+            {
+                cmd_job.cmd.write().unwrap()
+                    .current_dir(&working_dir)
+                    .envs(crate::runner::new_environ(env, true));
+            }
         }
 
-        self.base_provider.cmd = Some(Arc::new(RwLock::new(cmd_job)));
+        self.base_provider.cmd = Some(cmd_job);
         ///////////////////////////////////////
 
     }
-    
-    /// start操作base_provider字段中的cmd字段，使用的是非阻塞的spawn
+
+    /// 启动配置好的命令
     fn start(&mut self) -> Result<(), Box<dyn Error>>{
-        if let Ok(mut c) = self.base_provider.cmd.as_mut().unwrap().write(){
-            debug!("命令启动：{:?}", c.cmd.get_args().collect::<Vec<&OsStr>>());
-            c.finished = Mutex::new(bounded(1).1);
-
-            if let Err(e) = c.cmd.spawn(){
-                return Err(Box::new(e))
-            }
-        }
-        Ok(())
+        self.base_provider.start()
     }
     
-    fn terminate(&mut self) -> Result<(), Box<dyn Error>>{
-        if let Ok(mut cmd) = self.base_provider.cmd
-            .as_ref().expect("没有cmd字段").write()
-        {
-            debug!("正在终止provider：{}", self.base_provider.name());
-            if !self.base_provider.is_running(){
-                warn!("调用了终止函数，但是此时没有检测到 {} 正在运行", self.base_provider.name());
-                return Ok(())
-            }
-
-            /////////////////////////////////
-            // cmd的terminate方法
-            if cmd.cmd.get_program().eq("") || cmd.result.is_none(){
-                return Err(err_process_not_started())
-            }
-            if let Some(d) = self.base_provider.docker_ref(){
-                Command::new("docker")
-                    .arg("stop")
-                    .arg("-t")
-                    .arg("2")
-                    .arg(self.base_provider.name())
-                    .output()?;
-                return Ok(())
-            }
-            if let Some(child) = cmd.result.as_mut(){
-                // 发送 SIGTERM 信号
-                let pid = Pid::from_raw(child.id() as i32); // 获取子进程的 PID
-                if let Err(e) = kill(pid, Signal::SIGTERM){
-                    return Err(e.into())
-                }
-                // 等待 2 秒
-                thread::sleep(core::time::Duration::from_secs(2));
-
-                // 如果子进程仍在运行，则发送 SIGKILL 信号强制退出
-                if let None = child.try_wait().ok().flatten() {
-                    kill(pid, Signal::SIGKILL).expect("发送SIGKILL信号失败");
-                    warn!("对进程发送了SIGTERM信号，但是其未在两秒内退出，所以发送了SIGKILL信号");
-                }
-            }
-
-            Ok(())
-            /////////////////////////////////
-        }else {
-            panic!("在调用terminate时，无法在BaseProvider的cmd字段上获得锁")
-        }
-    }
+    
     
     
 }
 
 impl MirrorProvider for RsyncProvider  {
+    fn name(&self) -> String {
+        self.base_provider.name()
+    }
 
     fn upstream(&self) -> String {
         self.rsync_config.upstream_url.clone()
@@ -342,25 +323,31 @@ impl MirrorProvider for RsyncProvider  {
         ProviderEnum::Rsync
     }
     
+    // 运行rsync命令并等待结果，记录同步文件大小。如果rsync异常，则解析错误并将错误返回
     fn run(&mut self, started: Sender<Empty>) -> Result<(), Box<dyn Error>> {
         self.data_size = "".to_string();
-        if let Err(e) = MirrorProvider::start(self){
-            return Err(e);
-        }
+        
+        MirrorProvider::start(self)?;
+        
         started.send(()).expect("发送失败");
         match self.base_provider.wait() {
             Err(err) =>{
                 return Err(err);
             }
             Ok(exit_code) if exit_code != 0 => {
+                println!("捕获到非正常退出！{exit_code}");
                 if let Some(msg) = internal::util::translate_rsync_error_code(exit_code){
                     debug!("rsync 异常终止： {} ({})", exit_code, msg);
                     if let Some(log_file_fd) = self.base_provider.log_file_fd.as_mut(){
                         log_file_fd.write(format!("{}\n",msg).as_bytes())?;
                     }
                     return Err(msg.into());
+                }else {
+                    // panic!("解析错误状态码失败")
+                    return Err("解析错误状态码失败".into());
                 }
             }
+            // 正常退出
             _ => {}
         }
         if let Some(size) = extract_size_from_rsync_log(&*self.base_provider.log_file()) {
@@ -369,13 +356,20 @@ impl MirrorProvider for RsyncProvider  {
         Ok(())
     }
 
+    // 根据配置生成rsync命令，启动一个新进程来运行
     fn start(&mut self) -> Result<(), Box<dyn Error>> {
         if self.is_running(){
             return Err("provider现在正在运行".into())
         }
         self.cmd();
-    
+        
+        if let Err(e) = self.base_provider.prepare_log_file(false){
+            error!("prepare_log_file 失败{}", e);
+            return Err(e);
+        }
+        
         if let Err(e) = self.start(){
+            error!("start失败: {}", e);
             return Err(e);
         }
         
@@ -384,9 +378,34 @@ impl MirrorProvider for RsyncProvider  {
         
         Ok(())
     }
-    
+
+    fn terminate(&self) -> Result<(), Box<dyn Error>> {
+        self.base_provider.terminate()
+    }
+
+
+    fn is_running(&self) -> bool {
+        self.base_provider.is_running()
+    }
+
     fn add_hook(&mut self, hook: HookType) {
         self.base_provider.add_hook(hook);
+    }
+
+    fn hooks(&self) -> &Vec<Box<dyn JobHook>> {
+        self.base_provider.hooks()
+    }
+
+    fn interval(&self) -> Duration {
+        self.base_provider.interval()
+    }
+
+    fn timeout(&self) -> Duration {
+        self.base_provider.timeout()
+    }
+
+    fn working_dir(&self) -> String {
+        self.base_provider.working_dir()
     }
 
     fn log_dir(&self) -> String {
@@ -400,5 +419,16 @@ impl MirrorProvider for RsyncProvider  {
     fn data_size(&self) -> String {
         self.data_size.clone()
     }
-    
+
+    fn enter_context(&mut self) -> Arc<Mutex<Option<Context>>> {
+        self.base_provider.enter_context()
+    }
+
+    fn exit_context(&mut self) -> Arc<Mutex<Option<Context>>> {
+        self.base_provider.exit_context()
+    }
+
+    fn context(&self) -> Arc<Mutex<Option<Context>>> {
+        self.base_provider.context()
+    }
 }

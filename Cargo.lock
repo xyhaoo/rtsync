@@ -1084,22 +1084,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "http_test"
-version = "0.1.0"
-dependencies = [
- "hyper 1.5.0",
- "manager",
- "rocket",
- "rustls 0.23.17",
- "serde",
- "serde_json",
- "tokio",
- "tokio-rustls 0.26.0",
- "tokio-stream",
- "tower",
-]
-
-[[package]]
 name = "httparse"
 version = "1.9.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3229,22 +3213,6 @@ dependencies = [
  "toml_datetime",
  "winnow",
 ]
-
-[[package]]
-name = "tower"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2873938d487c3cfb9aed7546dc9f2711d867c9f90c46b889989a2cb84eba6b4f"
-dependencies = [
- "tower-layer",
- "tower-service",
-]
-
-[[package]]
-name = "tower-layer"
-version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "121c2a6cda46980bb0fcd1647ffaf6cd3fc79a013de288782836f6df9c48780e"
 
 [[package]]
 name = "tower-service"

@@ -43,8 +43,8 @@ pub(crate) struct Config {
     pub(crate) zfs: ZFSConfig,
     pub(crate) btrfs_snapshot: BtrfsSnapshotConfig,
     pub(crate) docker: DockerConfig,
-    include: IncludeConfig,
-    mirrors_config: Vec<MirrorConfig>,
+    pub(crate) include: IncludeConfig,
+    pub(crate) mirrors_config: Vec<MirrorConfig>,
     pub(crate) mirrors: Vec<MirrorConfig>,
 }
 
@@ -54,7 +54,7 @@ pub(crate) struct GlobalConfig {
     pub(crate) name: Option<String>,
     pub(crate) log_dir: Option<String>,
     pub(crate) mirror_dir: Option<String>,
-    concurrent: Option<u64>,
+    pub(crate) concurrent: Option<u64>,
     pub(crate) interval: Option<i64>,
     pub(crate) retry: Option<i64>,
     pub(crate) timeout: Option<i64>,

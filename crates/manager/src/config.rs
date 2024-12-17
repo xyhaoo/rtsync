@@ -156,9 +156,7 @@ mod tests {
         let path = tmp_file.path();
 
         // 设置文件权限为 0644
-        let mut perms = fs::metadata(path).expect("failed to get metadata").permissions();
-        perms.set_mode(0o644); // 设置权限
-        fs::set_permissions(path, perms).expect("failed to set permissions");
+        fs::set_permissions(path, fs::Permissions::from_mode(0o644)).expect("failed to set permissions");
 
 
         // 用从命令行中（实例化Cli对象）读取的config（文件）和命令行中的其他参数来初始化Config struct

@@ -1,5 +1,6 @@
 use std::error::Error;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 use crate::config::{ProviderEnum, MirrorConfig, Config};
 use crate::common;
 use crate::cgroup::CGroupHook;
@@ -17,7 +18,10 @@ use crate::rsync_provider::{RsyncConfig, RsyncProvider};
 use crate::two_stage_rsync_provider::{TwoStageRsyncConfig, TwoStageRsyncProvider};
 use crate::zfs_hook::ZfsHook;
 
-use crate::btrfs_snapshot_hook_nolinux::BtrfsSnapshotHook;
+#[cfg(not(target_os = "linux"))]
+use crate::btrfs_snapshot_hook_nolinux;
+#[cfg(target_os = "linux")]
+use crate::btrfs_snapshot_hook;
 use crate::exec_post_hook::{ExecOn, ExecPostHook};
 use crate::loglimit_hook::LogLimiter;
 
@@ -31,7 +35,7 @@ pub(crate) const _LOG_FILE_KEY: &str = "log_file";
 // MirrorProvider trait
 pub trait MirrorProvider: /*Clone+Sized*/{
     // name
-    fn name(&self) -> String {"".to_string()}
+    fn name(&self) -> String;
     fn upstream(&self) -> String;
     fn r#type(&self) -> ProviderEnum;
 
@@ -42,41 +46,41 @@ pub trait MirrorProvider: /*Clone+Sized*/{
     // 等待job结束
     fn wait(&self) -> Result<(), Box<dyn Error>> {Ok(())}
     // 终止mirror job
-    fn terminate(&self) -> Result<(), Box<dyn Error>> {Ok(())}
+    fn terminate(&self) -> Result<(), Box<dyn Error>>;
     // job hooks
-    fn is_running(&self) -> bool {false}
+    fn is_running(&self) -> bool;
     // Cgroup
     fn c_group(&self) -> Option<&CGroupHook> {None}
     // ZFS
-    fn zfs(&self) -> Option<ZfsHook> {None}
+    fn zfs(&self) -> Option<&ZfsHook> {None}
     // docker
     fn docker(&self) -> Option<&DockerHook> {None}
 
     fn add_hook(&mut self, hook: HookType);
-    fn hooks(&self) -> Vec<Box<dyn JobHook>> {Vec::new()}
+    fn hooks(&self) -> &Vec<Box<dyn JobHook>>;
 
-    fn interval(&self)-> Duration {Duration::seconds(1)}
+    fn interval(&self)-> Duration;
     fn retry(&self) -> u64 {0}
-    fn timeout(&self) -> Duration {Duration::seconds(1)}
+    fn timeout(&self) -> Duration;
 
-    fn working_dir(&self) -> String {String::new()}
+    fn working_dir(&self) -> String;
     fn log_dir(&self) -> String;
     fn log_file(&self) -> String;
     fn is_master(&self) -> bool {false}
     fn data_size(&self) -> String;
 
     // enter context
-    fn enter_context(&self) -> Option<&mut Context> { None}
+    fn enter_context(&mut self) -> Arc<Mutex<Option<Context>>>;
     // exit context
-    fn exit_context(&self) -> Result<Context, Box<dyn Error>> {Err("".into())}
+    fn exit_context(&mut self) -> Arc<Mutex<Option<Context>>>;
     // return context
-    fn context(&self) -> Option<Context> {None}
+    fn context(&self) -> Arc<Mutex<Option<Context>>>;
 }
 
 // new_mirror_provider使用一个MirrorConfig和全局的Config创建一个MirrorProvider实例
 pub(crate) fn new_mirror_provider(mut mirror: MirrorConfig, cfg: Config) -> Box<dyn MirrorProvider>
 {
-    // 使用m中的name字段匹配log_dir中的占位符
+    // 使用MirrorConfig中的name字段匹配log_dir中的占位符
     let format_log_dir = |log_dir: String, m: &MirrorConfig|-> String{
         let mut tera = Tera::default(); // 创建一个空的模板引擎
         let mut context = tera::Context::new();
@@ -98,25 +102,19 @@ pub(crate) fn new_mirror_provider(mut mirror: MirrorConfig, cfg: Config) -> Box<
             .join(mirror.mirror_sub_dir.clone().unwrap_or_default())
             .join(mirror.name.clone().unwrap_or_default())
             .display().to_string());
+    
+    if let Some(0) = mirror.interval{
+        mirror.interval = cfg.global.interval.clone()
+    }
 
-    mirror.interval = match mirror.interval{
-        Some(0) => cfg.global.interval.clone(),
-        None => None,
-        Some(other) => Some(other),
-    };
+    if let Some(0) = mirror.retry{
+        mirror.retry = cfg.global.retry.clone()
+    }
 
-    mirror.retry = match mirror.retry{
-        Some(0) => cfg.global.retry.clone(),
-        None => None,
-        Some(other) => Some(other),
-    };
-
-    mirror.timeout = match mirror.timeout{
-        Some(0) => cfg.global.timeout.clone(),
-        None => None,
-        Some(other) => Some(other),
-    };
-
+    if let Some(0) = mirror.timeout {
+        mirror.timeout = cfg.global.timeout.clone()
+    }
+    
     let log_dir = format_log_dir(log_dir, &mirror);
 
     //is master
@@ -173,11 +171,11 @@ pub(crate) fn new_mirror_provider(mut mirror: MirrorConfig, cfg: Config) -> Box<
                 working_dir: mirror_dir,
                 log_dir: log_dir.clone(),
                 log_file: PathBuf::new().join(log_dir).join("latest.log").display().to_string(),
-                use_ipv4: mirror.use_ipv4.unwrap(),
-                use_ipv6: mirror.use_ipv6.unwrap(),
+                use_ipv4: mirror.use_ipv4.unwrap_or_default(),
+                use_ipv6: mirror.use_ipv6.unwrap_or_default(),
                 interval: Duration::minutes(mirror.interval.unwrap_or_default()),
                 retry: mirror.retry.unwrap_or_default(),
-                timeout: Duration::seconds(mirror.timeout.unwrap()),
+                timeout: Duration::seconds(mirror.timeout.unwrap_or_default()),
             };
             match RsyncProvider::new(rc) {
                 Ok(mut p) => {
@@ -199,17 +197,17 @@ pub(crate) fn new_mirror_provider(mut mirror: MirrorConfig, cfg: Config) -> Box<
                 password: mirror.password.clone().unwrap_or_default(),
                 exclude_file: mirror.exclude_file.clone().unwrap_or_default(),
                 extra_options: mirror.rsync_options.clone().unwrap_or_default(),
-                rsync_never_timeout: mirror.rsync_no_timeo.unwrap(),
-                rsync_timeout_value: mirror.rsync_timeout.unwrap(),
+                rsync_never_timeout: mirror.rsync_no_timeo.unwrap_or_default(),
+                rsync_timeout_value: mirror.rsync_timeout.unwrap_or_default(),
                 rsync_env: mirror.env.clone().unwrap_or_default(),
                 working_dir: mirror_dir,
                 log_dir: log_dir.clone(),
                 log_file: PathBuf::new().join(log_dir).join("latest.log").display().to_string(),
-                use_ipv4: mirror.use_ipv4.unwrap(),
-                use_ipv6: mirror.use_ipv6.unwrap(),
-                interval: Duration::minutes(mirror.interval.unwrap()),
-                retry: mirror.retry.unwrap(),
-                timeout: Duration::seconds(mirror.timeout.unwrap()),
+                use_ipv4: mirror.use_ipv4.unwrap_or_default(),
+                use_ipv6: mirror.use_ipv6.unwrap_or_default(),
+                interval: Duration::minutes(mirror.interval.unwrap_or_default()),
+                retry: mirror.retry.unwrap_or_default(),
+                timeout: Duration::seconds(mirror.timeout.unwrap_or_default()),
             };
             match TwoStageRsyncProvider::new(rc) {
                 Ok(mut p) => {
@@ -229,20 +227,27 @@ pub(crate) fn new_mirror_provider(mut mirror: MirrorConfig, cfg: Config) -> Box<
     provider.add_hook(HookType::LogLimiter(LogLimiter::new()));
 
     // add zfs hook
-    if cfg.zfs.enable.unwrap() && cfg.zfs.z_pool.is_some(){
-        let z_pool = cfg.zfs.z_pool.clone().unwrap();
-        provider.add_hook(HookType::Zfs(ZfsHook::new(z_pool)));
+    if let Some(true) = cfg.zfs.enable{
+        if let Some(z_pool) = cfg.zfs.z_pool{
+            provider.add_hook(HookType::Zfs(ZfsHook::new(z_pool)));
+        }
     }
 
     // add btrfs snapshot hook
-    if cfg.btrfs_snapshot.enable.unwrap() && cfg.btrfs_snapshot.snapshot_path.is_some(){
-        let snapshot_path = cfg.btrfs_snapshot.snapshot_path.clone().unwrap();
-        provider.add_hook(HookType::BtrfsNoLinux(BtrfsSnapshotHook::new(&*snapshot_path, mirror.clone())));
+    if let Some(true) = cfg.btrfs_snapshot.enable{
+        if let Some(snapshot_path) = cfg.btrfs_snapshot.snapshot_path{
+            #[cfg(not(target_os = "linux"))]
+            provider.add_hook(HookType::BtrfsNoLinux(btrfs_snapshot_hook_nolinux::BtrfsSnapshotHook::new(&*snapshot_path, mirror.clone())));
+            #[cfg(target_os = "linux")]
+            provider.add_hook(HookType::Btrfs(btrfs_snapshot_hook::BtrfsSnapshotHook::new(&*provider.name(), &*snapshot_path, mirror.clone())));
+        }
     }
 
     // add docker hook
-    if cfg.docker.enable.unwrap() && !mirror.docker_image.as_ref().unwrap().is_empty(){
-        provider.add_hook(HookType::Docker(DockerHook::new(cfg.docker.clone(), mirror.clone())));
+    if let Some(true) = cfg.docker.enable{
+        if mirror.docker_image.is_some(){
+            provider.add_hook(HookType::Docker(DockerHook::new(cfg.docker.clone(), mirror.clone())));
+        }
     }
     // else if cfg.c_group.enable.unwrap() {
     //     // add cgroup hook
