@@ -29,7 +29,7 @@ impl JobHook for LogLimiter{
                 log_dir: String, 
                 log_file: String, 
                 working_dir: String, 
-                context: &Arc<Mutex<Option<Context>>>) 
+                context: Arc<Mutex<Option<Context>>>) 
         -> Result<(), Box<dyn Error>> 
     {
         debug!("为 {} 执行日志限制器", provider_name);
@@ -105,7 +105,7 @@ impl JobHook for LogLimiter{
     }
 
     fn post_success(&self, 
-                    context: &Arc<Mutex<Option<Context>>>, 
+                    context: Arc<Mutex<Option<Context>>>, 
                     _provider_name: String, 
                     _working_dir: String, 
                     _upstream: String, 
@@ -131,7 +131,7 @@ impl JobHook for LogLimiter{
                  _upstream: String,
                  log_dir: String,
                  log_file: String,
-                 context: &Arc<Mutex<Option<Context>>>)
+                 context: Arc<Mutex<Option<Context>>>)
         -> Result<(), Box<dyn Error>> 
     {
         

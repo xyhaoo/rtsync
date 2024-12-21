@@ -3871,6 +3871,7 @@ dependencies = [
  "merge",
  "nix",
  "regex",
+ "scopeguard",
  "serde",
  "shlex",
  "skiplist",

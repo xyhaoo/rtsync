@@ -35,7 +35,7 @@ impl ZfsHook {
 }
 impl JobHook for ZfsHook {
     // 检查工作目录是否为ZFS数据集
-    fn per_job(&self, working_dir: String, provider_name: String) -> Result<(), Box<dyn Error>> {
+    fn pre_job(&self, working_dir: String, provider_name: String) -> Result<(), Box<dyn Error>> {
         // let working_dir = self.empty_hook.provider.working_dir();
         if !Path::new(&working_dir).exists() {
             let err = format!("目录 {} 不存在", working_dir);

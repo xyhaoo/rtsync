@@ -14,7 +14,7 @@ use crate::context::Context;
 use crate::hooks::{EmptyHook, JobHook};
 use crate::provider::MirrorProvider;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct DockerHook {
     // pub(crate) empty_hook: EmptyHook<T>,
     pub(crate) image: String,
@@ -69,7 +69,7 @@ impl JobHook for DockerHook {
                 log_dir: String, 
                 log_file: String, 
                 working_dir: String,
-                context: &Arc<Mutex<Option<Context>>>) 
+                context: Arc<Mutex<Option<Context>>>) 
         -> Result<(), Box<dyn Error>>
     {
         // 如果目录不存在，则创建目录
@@ -105,7 +105,7 @@ impl JobHook for DockerHook {
     }
 
     fn post_exec(&self, 
-                 context: &Arc<Mutex<Option<Context>>>, 
+                 context: Arc<Mutex<Option<Context>>>, 
                  provider_name: String) 
         -> Result<(), Box<dyn Error>>
     {

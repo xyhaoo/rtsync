@@ -21,7 +21,7 @@ hooks to exec before/after syncing
 */
 #[enum_dispatch]
 pub(crate) trait JobHook{
-    fn per_job(&self, 
+    fn pre_job(&self, 
                _working_dir: String, 
                _provider_name: String) 
         -> Result<(), Box<dyn Error>> {Ok(())}
@@ -31,16 +31,16 @@ pub(crate) trait JobHook{
                 _log_dir: String, 
                 _log_file: String, 
                 _working_dir: String, 
-                _context: &Arc<Mutex<Option<Context>>>) 
+                _context: Arc<Mutex<Option<Context>>>) 
         -> Result<(), Box<dyn Error>> {Ok(())}
     
     fn post_exec(&self, 
-                 _context: &Arc<Mutex<Option<Context>>>, 
+                 _context: Arc<Mutex<Option<Context>>>, 
                  _provider_name: String) 
         -> Result<(), Box<dyn Error>> {Ok(())}
     
     fn post_success(&self,
-                    _context: &Arc<Mutex<Option<Context>>>, 
+                    _context: Arc<Mutex<Option<Context>>>, 
                     _provider_name: String,
                     _working_dir: String,
                     _upstream: String,
@@ -54,7 +54,7 @@ pub(crate) trait JobHook{
                  _upstream: String,
                  _log_dir: String,
                  _log_file: String,
-                 _context: &Arc<Mutex<Option<Context>>>) 
+                 _context: Arc<Mutex<Option<Context>>>) 
         -> Result<(), Box<dyn Error>> {Ok(())}
 }
 pub(crate) struct EmptyHook{

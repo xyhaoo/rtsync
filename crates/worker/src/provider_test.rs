@@ -7,7 +7,8 @@ mod tests{
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
-    use std::sync::{Arc, Mutex, RwLock};
+    use std::sync::{Arc, Mutex};
+    use tokio::sync::RwLock;
     use anymap::AnyMap;
     use chrono::Duration;
     use tempfile::Builder;
@@ -160,6 +161,7 @@ exit 0
         let mut provider = RsyncProvider::new(c.clone()).unwrap();
         assert!(provider.run(bounded(1).0).is_err());
         let logged_content = fs::read_to_string(provider.log_file()).unwrap();
+        println!("{}", logged_content);
         assert!(logged_content.contains("Syntax or usage error"));
 
     }
@@ -392,16 +394,16 @@ done
         let working_dir = provider.working_dir();
         let context = provider.context();
 
-        for hook in provider.hooks() {
+        for hook in provider.hooks().lock().unwrap().iter() {
             hook.pre_exec(provider_name.clone(),
                           log_dir.clone(),
                           log_file.clone(),
                           working_dir.clone(),
-                          &context).unwrap()
+                          context.clone()).unwrap()
         }
         provider.run(bounded(1).0).unwrap();
-        for hook in provider.hooks() {
-            hook.post_exec(&context, provider_name.clone()).unwrap()
+        for hook in provider.hooks().lock().unwrap().iter() {
+            hook.post_exec(context.clone(), provider_name.clone()).unwrap()
         }
         println!("{}", provider.log_file());
         let logged_content = fs::read_to_string(provider.log_file()).unwrap();
@@ -490,7 +492,7 @@ echo $AOSP_REPO_BIN
     }
 
     // 开启一个线程执行provider.run()，在主线程将其结束
-    fn test_killing_a_long_job(mut provider: CmdProvider, mut script_file: File, script_file_path: PathBuf){
+    fn test_killing_a_long_job(provider: CmdProvider, mut script_file: File, script_file_path: PathBuf){
         let script_content = r#"#!/bin/bash
 sleep 7
 			"#;
@@ -500,37 +502,43 @@ sleep 7
                 .permissions().set_mode(0o755);
         }
 
-        // let (start, receive) = bounded::<Empty>(1);
-        //
-        // provider.run(start).unwrap();
+        let (start, receive) = bounded::<Empty>(1);
+        let mut provider_clone = provider.clone();
+        thread::spawn(move ||{
+            provider_clone.run(start).unwrap();
+        });
+        receive.recv().unwrap();
+        assert_eq!(provider.is_running(), true);
+        thread::sleep(std::time::Duration::from_secs(1));
+        provider.terminate().unwrap();
+        
         //
         // thread::sleep(std::time::Duration::from_secs(1));
-        // receive.recv().unwrap();
         //
         // assert_eq!(provider.is_running(), true);
         // provider.terminate().unwrap();
 
-        let provider = Arc::new(RwLock::new(provider));
-        let provider_clone = provider.clone();
-        let (start, receive) = bounded::<Empty>(1);
-        let handler = thread::spawn(move || {
-
-            let mut provider = provider_clone.try_write().unwrap();
-            provider.run(start).unwrap();
-            drop(provider);
-        });
-        receive.recv().unwrap();
+        // let provider = Arc::new(RwLock::new(provider));
+        // let provider_clone = provider.clone();
+        // let (start, receive) = bounded::<Empty>(1);
+        // let handler = thread::spawn(move || {
+        //
+        //     let mut provider = provider_clone.try_write().unwrap();
+        //     provider.run(start).unwrap();
+        //     drop(provider);
+        // });
+        // receive.recv().unwrap();
+        // // thread::sleep(std::time::Duration::from_secs(1));
+        //
+        // let provider = provider.try_read().unwrap();
+        // assert_eq!(provider.is_running(), true);
         // thread::sleep(std::time::Duration::from_secs(1));
-
-        let provider = provider.try_read().unwrap();
-        assert_eq!(provider.is_running(), true);
-        thread::sleep(std::time::Duration::from_secs(1));
-        drop(provider);
-        // assert_eq!(provider.try_read().unwrap().is_running(), true);
-        // let provider = provider.try_write().unwrap();
-        // provider.terminate().unwrap();
-
-        handler.join().unwrap();
+        // drop(provider);
+        // // assert_eq!(provider.try_read().unwrap().is_running(), true);
+        // // let provider = provider.try_write().unwrap();
+        // // provider.terminate().unwrap();
+        //
+        // handler.join().unwrap();
     }
 
     #[test]

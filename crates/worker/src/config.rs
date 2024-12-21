@@ -184,11 +184,11 @@ where
             let trimmed = raw.trim().to_lowercase();
             let suffixes = [
                 ("b", 1),
-                ("k", 1 << 10), ("kb", 1 << 10),
-                ("m", 1 << 20), ("mb", 1 << 20), ("mib", 1 << 20),
-                ("g", 1 << 30), ("gb", 1 << 30), ("gib", 1 << 30),
-                ("t", 1 << 40), ("tb", 1 << 40), ("tib", 1 << 40),
-                ("p", 1 << 50), ("pb", 1 << 50), ("pib", 1 << 50),
+                ("k", 10u64.pow(3)), ("kb", 10u64.pow(3)), ("kib", 1 << 10),
+                ("m", 10u64.pow(6)), ("mb", 10u64.pow(6)), ("mib", 1 << 20),
+                ("g", 10u64.pow(9)), ("gb", 10u64.pow(9)), ("gib", 1 << 30),
+                ("t", 10u64.pow(12)), ("tb", 10u64.pow(12)), ("tib", 1 << 40),
+                ("p", 10u64.pow(15)), ("pb", 10u64.pow(15)), ("pib", 1 << 50),
             ];
             for (suffix, multiplier) in &suffixes {
                 if trimmed.ends_with(suffix) {

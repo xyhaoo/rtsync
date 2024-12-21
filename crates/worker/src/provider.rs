@@ -1,3 +1,4 @@
+use std::cell::RefCell;
 use std::error::Error;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -33,7 +34,7 @@ pub(crate) const _LOG_FILE_KEY: &str = "log_file";
 
 
 // MirrorProvider trait
-pub trait MirrorProvider: /*Clone+Sized*/{
+pub trait MirrorProvider {
     // name
     fn name(&self) -> String;
     fn upstream(&self) -> String;
@@ -42,7 +43,7 @@ pub trait MirrorProvider: /*Clone+Sized*/{
     // 开始后等待
     fn run(&mut self, started: Sender<common::Empty>) -> Result<(), Box<dyn Error>>;
     // job开始
-    fn start(&mut self) -> Result<(), Box<dyn Error>> {Ok(())}
+    fn start(&self) -> Result<(), Box<dyn Error>> {Ok(())}
     // 等待job结束
     fn wait(&self) -> Result<(), Box<dyn Error>> {Ok(())}
     // 终止mirror job
@@ -50,14 +51,14 @@ pub trait MirrorProvider: /*Clone+Sized*/{
     // job hooks
     fn is_running(&self) -> bool;
     // Cgroup
-    fn c_group(&self) -> Option<&CGroupHook> {None}
+    fn c_group(&self) -> Arc<Option<CGroupHook>> {Arc::new(None)}
     // ZFS
-    fn zfs(&self) -> Option<&ZfsHook> {None}
+    fn zfs(&self) -> Arc<Option<ZfsHook>> {Arc::new(None)}
     // docker
-    fn docker(&self) -> Option<&DockerHook> {None}
+    fn docker(&self) -> Arc<Option<DockerHook>>;
 
     fn add_hook(&mut self, hook: HookType);
-    fn hooks(&self) -> &Vec<Box<dyn JobHook>>;
+    fn hooks(&self) -> Arc<Mutex<Vec<Box<dyn JobHook>>>>;
 
     fn interval(&self)-> Duration;
     fn retry(&self) -> u64 {0}
@@ -146,8 +147,8 @@ pub(crate) fn new_mirror_provider(mut mirror: MirrorConfig, cfg: Config) -> Box<
                 env: mirror.env.clone().unwrap_or_default(),
             };
             match CmdProvider::new(pc) {
-                Ok(mut p) => {
-                    p.base_provider.is_master = is_master;
+                Ok(p) => {
+                    p.base_provider.write().unwrap().is_master = is_master;
                     provider = Box::new(p);
                 },
                 Err(e) => {
@@ -179,7 +180,7 @@ pub(crate) fn new_mirror_provider(mut mirror: MirrorConfig, cfg: Config) -> Box<
             };
             match RsyncProvider::new(rc) {
                 Ok(mut p) => {
-                    p.base_provider.is_master = is_master;
+                    p.base_provider.write().unwrap().is_master = is_master;
                     provider = Box::new(p);
                 },
                 Err(e) => {
@@ -211,7 +212,7 @@ pub(crate) fn new_mirror_provider(mut mirror: MirrorConfig, cfg: Config) -> Box<
             };
             match TwoStageRsyncProvider::new(rc) {
                 Ok(mut p) => {
-                    p.base_provider.is_master = is_master;
+                    p.base_provider.write().unwrap().is_master = is_master;
                     provider = Box::new(p);
                 },
                 Err(e) => {

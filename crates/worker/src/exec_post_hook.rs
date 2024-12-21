@@ -93,7 +93,7 @@ impl ExecPostHook {
 impl JobHook for ExecPostHook{
 
     fn post_success(&self,
-                    _context: &Arc<Mutex<Option<Context>>>,
+                    _context: Arc<Mutex<Option<Context>>>,
                     provider_name: String,
                     working_dir: String,
                     upstream: String,
@@ -113,7 +113,7 @@ impl JobHook for ExecPostHook{
                  upstream: String,
                  log_dir: String,
                  log_file: String, 
-                 _context: &Arc<Mutex<Option<Context>>>) 
+                 _context: Arc<Mutex<Option<Context>>>) 
         -> Result<(), Box<dyn Error>> 
     {
         if let ExecOn::Failure = self.exec_on{

@@ -21,5 +21,7 @@ mod job;
 mod worker;
 mod config_test;
 mod provider_test;
+mod docker_test;
+mod exec_post_test;
 
 

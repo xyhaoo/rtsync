@@ -205,12 +205,12 @@ impl JobHook for CGroupHook  {
                 _log_dir: String,
                 _log_file: String,
                 _working_dir: String,
-                _context: &Arc<Mutex<Option<Context>>>)
+                _context: Arc<Mutex<Option<Context>>>)
         -> Result<(), Box<dyn Error>> 
     {
         todo!()
     }
-    fn post_exec(&self, context: &Arc<Mutex<Option<Context>>>, provider_name: String) -> Result<(), Box<dyn Error>> {
+    fn post_exec(&self, context: Arc<Mutex<Option<Context>>>, provider_name: String) -> Result<(), Box<dyn Error>> {
         todo!()
     }
 }

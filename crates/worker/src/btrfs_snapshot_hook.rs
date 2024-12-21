@@ -42,7 +42,7 @@ impl JobHook for BtrfsSnapshotHook {
     // 情况1：不存在 => 创建一个新的子卷
     // 情况2：作为子卷存在 => 不处理
     // 情况3：作为目录存在 => 错误
-    fn per_job(&self, working_dir: String, _provider_name: String) -> Result<(), Box<dyn Error>> {
+    fn pre_job(&self, working_dir: String, _provider_name: String) -> Result<(), Box<dyn Error>> {
         let path = working_dir;
         if !Path::new(&path).exists(){
             // 创建子卷
@@ -72,14 +72,14 @@ impl JobHook for BtrfsSnapshotHook {
                 _log_dir: String,
                 _log_file: String,
                 _working_dir: String,
-                _context: &Arc<Mutex<Option<Context>>>) 
+                _context: Arc<Mutex<Option<Context>>>) 
         -> Result<(), Box<dyn Error>> 
     {
         Ok(())
     }
 
     fn post_exec(&self,
-                 _context: &Arc<Mutex<Option<Context>>>, 
+                 _context: Arc<Mutex<Option<Context>>>, 
                  _provider_name: String) 
         -> Result<(), Box<dyn Error>> 
     {
@@ -88,7 +88,7 @@ impl JobHook for BtrfsSnapshotHook {
 
     // 创建新的快照，如果旧快照存在，将其删除
     fn post_success(&self,
-                    _context: &Arc<Mutex<Option<Context>>>,
+                    _context: Arc<Mutex<Option<Context>>>,
                     _provider_name: String,
                     working_dir: String,
                     _upstream: String,

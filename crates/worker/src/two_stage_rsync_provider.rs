@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::error::Error;
 use std::{fs, io};
+use std::cell::RefCell;
 use std::ffi::OsStr;
 use std::fs::Permissions;
 use std::io::Write;
@@ -19,6 +20,7 @@ use internal::util::extract_size_from_rsync_log;
 use crate::common::{Empty, DEFAULT_MAX_RETRY};
 use crate::config::ProviderEnum;
 use crate::context::Context;
+use crate::docker::DockerHook;
 use crate::hooks::{HookType, JobHook};
 use crate::provider::{MirrorProvider, _LOG_DIR_KEY, _LOG_FILE_KEY, _WORKING_DIR_KEY};
 use crate::runner::CmdJob;
@@ -52,12 +54,13 @@ pub(crate) struct TwoStageRsyncConfig {
 }
 
 // RsyncProvider提供了基于rsync的同步作业的实现
+#[derive(Clone, Default)]
 pub(crate) struct TwoStageRsyncProvider {
-    pub(crate) base_provider: BaseProvider,
-    pub(crate) two_stage_rsync_config: TwoStageRsyncConfig,
-    stage1_options: Vec<String>,
-    stage2_options: Vec<String>,
-    data_size: String,
+    pub(crate) base_provider: Arc<RwLock<BaseProvider>>,
+    pub(crate) two_stage_rsync_config: Arc<TwoStageRsyncConfig>,
+    stage1_options: Arc<Vec<String>>,
+    stage2_options: Arc<Vec<String>>,
+    data_size: Arc<String>,
 }
 
 unsafe impl Send for TwoStageRsyncProvider{}
@@ -94,46 +97,31 @@ impl TwoStageRsyncProvider {
         if c.retry == 0{
             c.retry = DEFAULT_MAX_RETRY;
         }
+        if !c.username.is_empty(){
+            c.rsync_env.insert("USER".to_string(), c.username.clone());
+        }
+        if c.password.is_empty(){
+            c.rsync_env.insert("RSYNC_PASSWORD".to_string(), c.password.clone());
+        }
+        if c.rsync_cmd.is_empty(){
+            c.rsync_cmd = "rsync".to_string();
+        }
         let mut provider = TwoStageRsyncProvider{
-            base_provider: BaseProvider{
-                name: c.name.clone(),
-                ctx: Arc::new(Mutex::new(Some(Context::new()))),
-                interval: c.interval,
-                retry: c.retry,
-                timeout: c.timeout,
-
-                is_master: false,
-                cmd: None,
-                log_file_fd: None,
-                is_running: Some(Arc::new(AtomicBool::new(false))),
-                cgroup: None,
-                zfs: None,
-                docker: None,
-                hooks: vec![],
-            },
-            two_stage_rsync_config: c.clone(),
-            stage1_options: ["-aHvh", "--no-o", "--no-g", "--stats",
+            base_provider: Arc::new(RwLock::new(BaseProvider::new(c.name.clone(), c.interval, c.retry, c.timeout))),
+            two_stage_rsync_config: Arc::from(c.clone()),
+            stage1_options: Arc::from(["-aHvh", "--no-o", "--no-g", "--stats",
                 "--filter", "risk .~tmp~/", "--exclude", ".~tmp~/",
                 "--safe-links"]
-                .iter().map(|i|i.to_string()).collect(),
-            stage2_options: ["-aHvh", "--no-o", "--no-g", "--stats",
+                .iter().map(|i|i.to_string()).collect::<Vec<_>>()),
+            stage2_options: Arc::from(["-aHvh", "--no-o", "--no-g", "--stats",
                 "--filter", "risk .~tmp~/", "--exclude", ".~tmp~/",
                 "--delete", "--delete-after", "--delay-updates",
                 "--safe-links"]
-                .iter().map(|i|i.to_string()).collect(),
-            data_size: "".to_string(),
+                .iter().map(|i|i.to_string()).collect::<Vec<_>>()),
+            ..TwoStageRsyncProvider::default()
         };
-
-        if !c.username.is_empty(){
-            provider.two_stage_rsync_config.rsync_env.insert("USER".to_string(), c.username.clone());
-        }
-        if c.password.is_empty(){
-            provider.two_stage_rsync_config.rsync_env.insert("RSYNC_PASSWORD".to_string(), c.password.clone());
-        }
-        if c.rsync_cmd.is_empty(){
-            provider.two_stage_rsync_config.rsync_cmd = "rsync".to_string();
-        }
-        if let Some(ctx) = provider.base_provider.ctx.lock().unwrap().as_mut(){
+        let base_provider_lock = provider.base_provider.write().unwrap();
+        if let Some(ctx) = base_provider_lock.ctx.lock().unwrap().as_mut(){
             let mut value = AnyMap::new();
             value.insert(c.working_dir);
             ctx.set(_WORKING_DIR_KEY.to_string(), value);
@@ -146,7 +134,7 @@ impl TwoStageRsyncProvider {
             value.insert(c.log_file);
             ctx.set(_LOG_FILE_KEY.to_string(), value);
         }
-
+        drop(base_provider_lock);
         Ok(provider)
     }
 
@@ -154,7 +142,7 @@ impl TwoStageRsyncProvider {
         let mut options = Vec::new();
         match stage {
             1 => {
-                options.extend(self.stage1_options.clone());
+                options.extend(self.stage1_options.as_ref().clone());
                 match rsync_stage1_profiles.get(&*self.two_stage_rsync_config.stage1_profile){
                     Some(profiles) => {
                         for exc in profiles{
@@ -167,7 +155,7 @@ impl TwoStageRsyncProvider {
                 }
             }
             2 => {
-                options.extend(self.stage2_options.clone());
+                options.extend(self.stage2_options.as_ref().clone());
                 if self.two_stage_rsync_config.extra_options.len() > 0{
                     options.extend(self.two_stage_rsync_config.extra_options.clone());
                 }
@@ -199,16 +187,17 @@ impl TwoStageRsyncProvider {
     }
 
     /// cmd配置base_provider字段中的cmd字段
-    fn cmd(&mut self, cmd_and_args: Vec<String>, working_dir: String, env: HashMap<String, String>){
+    fn cmd(&self, cmd_and_args: Vec<String>, working_dir: String, env: HashMap<String, String>){
+        let mut base_provider_lock = self.base_provider.write().unwrap();
         let mut cmd_job: CmdJob;
         let mut args: Vec<String> = Vec::new();
-        let use_docker = self.base_provider.docker_ref().is_some();
+        let use_docker = base_provider_lock.docker_ref().is_some();
 
-        if let Some(d) = self.base_provider.docker_ref(){
+        if let Some(d) = base_provider_lock.docker_ref().as_ref(){
             let c = "docker";
             args.extend(vec!["run".to_string(), "--rm".to_string(),
                              "-a".to_string(), "STDOUT".to_string(), "-a".to_string(), "STDERR".to_string(),
-                             "--name".to_string(), self.base_provider.name().parse().unwrap(),
+                             "--name".to_string(), base_provider_lock.name().parse().unwrap(),
                              "-w".to_string(), working_dir.clone()]);
             // 指定用户
             unsafe {
@@ -227,7 +216,7 @@ impl TwoStageRsyncProvider {
             }
             // 设置内存限制
             if d.memory_limit.0 != 0{
-                args.extend(vec!["-m".to_string(), format!("{}", d.memory_limit.value())])
+                args.extend(vec!["-m".to_string(), format!("{}b", d.memory_limit.value())])
             }
             // 添加选项
             args.extend(d.options.iter().cloned());
@@ -236,45 +225,20 @@ impl TwoStageRsyncProvider {
             // 添加command
             args.extend(cmd_and_args.iter().cloned());
 
-
-            cmd_job = CmdJob{
-                cmd: RwLock::new(Command::new(c)),
-                result: RwLock::new(None),
-                working_dir: working_dir.clone(),
-                env: env.clone(),
-                log_file: None,
-                finished: RwLock::new(None),
-                ret_err: None,
-            };
-            { cmd_job.cmd.write().unwrap().args(&args); }
+            cmd_job = CmdJob::new(Command::new(c), working_dir.clone(), env.clone());
+            { cmd_job.cmd.lock().unwrap().args(&args); }
 
         }else {
             if cmd_and_args.len() == 1{
                 // cmd修改与rsync_provider相同
-                cmd_job = CmdJob{
-                    cmd: RwLock::new(Command::new(&cmd_and_args[0])),
-                    result: RwLock::new(None),
-                    working_dir: self.working_dir().clone(),
-                    env: env.clone(),
-                    log_file: None,
-                    finished: RwLock::new(None),
-                    ret_err: None,
-                };
+                cmd_job = CmdJob::new(Command::new(&cmd_and_args[0]), working_dir.clone(), env.clone());
                 
             }else if cmd_and_args.len() > 1 {
                 // cmd修改与rsync_provider相同
                 let c = cmd_and_args[0].clone();
                 let args = cmd_and_args[1..].to_vec();
-                cmd_job = CmdJob{
-                    cmd: RwLock::new(Command::new(c)),
-                    result: RwLock::new(None),
-                    working_dir: self.working_dir().clone(),
-                    env: env.clone(),
-                    log_file: None,
-                    finished: RwLock::new(None),
-                    ret_err: None,
-                };
-                { cmd_job.cmd.write().unwrap().args(&args); }
+                cmd_job = CmdJob::new(Command::new(c), working_dir.clone(), env.clone());
+                { cmd_job.cmd.lock().unwrap().args(&args); }
                 
             }else {
                 panic!("命令的长度最少是1！")
@@ -298,28 +262,25 @@ impl TwoStageRsyncProvider {
                 }
             }
             {
-                cmd_job.cmd.write().unwrap()
+                cmd_job.cmd
+                    .lock().unwrap()
                     .current_dir(&working_dir)
                     .envs(crate::runner::new_environ(env, true));
             }
         }
 
-        self.base_provider.cmd = Some(cmd_job);
-        ///////////////////////////////////////
-        
+        base_provider_lock.cmd = Some(cmd_job);
+        drop(base_provider_lock);
     }
-
-    /// 启动配置好的命令
-    fn start(&mut self) -> Result<(), Box<dyn Error>>{
-        self.base_provider.start()
-    }
+    
 }
 
 
 impl MirrorProvider for TwoStageRsyncProvider {
     fn name(&self) -> String {
-        self.base_provider.name()
+        self.base_provider.read().unwrap().name()
     }
+    
     fn upstream(&self) -> String {
         self.two_stage_rsync_config.upstream_url.clone()
     }
@@ -327,11 +288,15 @@ impl MirrorProvider for TwoStageRsyncProvider {
     fn r#type(&self) -> ProviderEnum {
         ProviderEnum::TwoStageRsync
     }
+    
     fn run(&mut self, started: Sender<Empty>) -> Result<(), Box<dyn Error>> {
         if self.is_running(){
             return Err("provider现在正在运行".into())
         }
-        self.data_size = String::from("");
+        let base_provider_lock = self.base_provider.write().unwrap();
+        self.data_size = Arc::from(String::new());
+        drop(base_provider_lock);
+        
         let stages = vec![1,2];
         for stage in stages{
             let mut command = vec![self.two_stage_rsync_config.rsync_cmd.clone()];
@@ -340,93 +305,109 @@ impl MirrorProvider for TwoStageRsyncProvider {
                 Ok(options) => {
                     command.extend(options);
                     command.push(self.two_stage_rsync_config.upstream_url.clone());
-                    command.push(self.base_provider.working_dir());
+                    command.push(self.working_dir());
                 }
             }
 
-            self.cmd(command, self.base_provider.working_dir(), self.two_stage_rsync_config.rsync_env.clone());
+            self.cmd(command, self.working_dir(), self.two_stage_rsync_config.rsync_env.clone());
+            let mut base_provider_lock = self.base_provider.write().unwrap();
+            base_provider_lock.prepare_log_file(stage>1)?;
+            base_provider_lock.start()?;
 
-            self.base_provider.prepare_log_file(stage>1)?;
-            
-            self.start()?;
-            
-            self.base_provider.is_running.as_mut().unwrap().store(true, Ordering::SeqCst);
-            debug!("将is_running字段设置为true :{}", self.base_provider.name());
-            
-            started.send(()).expect("发送失败");
-            match self.base_provider.wait() {
+            base_provider_lock.is_running.store(true, Ordering::SeqCst);
+
+            println!("debug: 将is_running字段设置为true :{}", base_provider_lock.name());
+            debug!("将is_running字段设置为true :{}", base_provider_lock.name());
+            drop(base_provider_lock);
+
+            let base_provider_lock = self.base_provider.read().unwrap();
+            let result = base_provider_lock.wait();
+            match result {
                 Err(err) =>{
                     return Err(err);
                 }
                 Ok(exit_code) if exit_code != 0 => {
                     if let Some(msg) = internal::util::translate_rsync_error_code(exit_code){
                         debug!("rsync 异常终止： {} ({})", exit_code, msg);
-                        if let Some(log_file_fd) = self.base_provider.log_file_fd.as_mut(){
+                        drop(base_provider_lock);
+                        if let Some(log_file_fd) = self.base_provider.write().unwrap().log_file_fd.as_mut(){
                             log_file_fd.write(format!("{}\n",msg).as_bytes())?;
                         }
                         return Err(msg.into());
                     }
                 }
-                _ => {}
+                _ => {
+                    drop(base_provider_lock);
+                }
             }
         }
 
-        if let Some(size) = extract_size_from_rsync_log(&*self.base_provider.log_file()) {
-            self.data_size = size
+        if let Some(size) = extract_size_from_rsync_log(&*self.log_file()) {
+            self.data_size = size.into()
         };
         Ok(())
     }
 
     fn terminate(&self) -> Result<(), Box<dyn Error>> {
-        self.base_provider.terminate()
+        println!("debug: 进入terminate！");
+        self.base_provider.read().unwrap().terminate()
     }
 
     fn is_running(&self) -> bool {
-        self.base_provider.is_running()
-    }
-    fn add_hook(&mut self, hook: HookType) {
-        self.base_provider.add_hook(hook);
+        self.base_provider.read().unwrap().is_running()
     }
 
-    fn hooks(&self) -> &Vec<Box<dyn JobHook>> {
-        self.base_provider.hooks()
+
+    fn docker(&self) -> Arc<Option<DockerHook>> {
+        self.base_provider.read().unwrap().docker_ref()
+    }
+
+    fn add_hook(&mut self, hook: HookType) {
+        self.base_provider.write().unwrap().add_hook(hook);
+    }
+
+    fn hooks(&self) -> Arc<Mutex<Vec<Box<dyn JobHook>>>> {
+        self.base_provider.read().unwrap()
+            .hooks()
     }
 
     fn interval(&self) -> Duration {
-        self.base_provider.interval()
+        self.base_provider.read().unwrap().interval()
     }
 
     fn timeout(&self) -> Duration {
-        self.base_provider.timeout()
+        self.base_provider.read().unwrap().timeout()
     }
 
     fn working_dir(&self) -> String {
-        self.base_provider.working_dir()
+        self.base_provider.read().unwrap().working_dir()
     }
 
-
     fn log_dir(&self) -> String {
-        self.base_provider.log_dir()
+        self.base_provider.read().unwrap().log_dir()
     }
 
     fn log_file(&self) -> String {
-        self.base_provider.log_file()
+        self.base_provider.read().unwrap().log_file()
     }
 
     fn data_size(&self) -> String {
-        self.data_size.clone()
+        self.data_size.to_string()
     }
 
     fn enter_context(&mut self) -> Arc<Mutex<Option<Context>>> {
-        self.base_provider.enter_context()
+        self.base_provider.write().unwrap()
+            .enter_context()
     }
 
     fn exit_context(&mut self) -> Arc<Mutex<Option<Context>>> {
-        self.base_provider.exit_context()
+        self.base_provider.write().unwrap()
+            .exit_context()
     }
 
     fn context(&self) -> Arc<Mutex<Option<Context>>> {
-        self.base_provider.context()
+        self.base_provider.write().unwrap()
+            .context()
     }
 }
 
