@@ -73,9 +73,9 @@ unsafe impl Sync for RsyncProvider{}
 impl RsyncProvider {
     pub(crate) fn new(mut c: RsyncConfig) -> Result<Self, Box<dyn Error>> {
         // TODO: 检查config选项
-        // if !c.upstream_url.ends_with("/"){
-        //     return Err("rsync上游URL应该以'/'结尾".into());
-        // }
+        if !c.upstream_url.ends_with("/"){
+            return Err("rsync上游URL应该以'/'结尾".into());
+        }
         if c.retry == 0{
             c.retry = DEFAULT_MAX_RETRY;
         }
@@ -175,7 +175,7 @@ impl RsyncProvider {
             // -w 容器内部工作目录
             args.extend(vec!["run".to_string(), "--rm".to_string(),
                              // "-a".to_string(), "STDOUT".to_string(), "-a".to_string(), "STDERR".to_string(),
-                             "--name".to_string(), base_provider_lock.name().parse().unwrap(),
+                             "--name".to_string(), d.name(base_provider_lock.name().parse().unwrap()),
                              "-w".to_string(), working_dir.clone()]);
             // -u 设置容器运行时的用户:用户组
             unsafe {

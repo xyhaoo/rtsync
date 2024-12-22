@@ -511,7 +511,7 @@ sleep 7
         assert_eq!(provider.is_running(), true);
         thread::sleep(std::time::Duration::from_secs(1));
         provider.terminate().unwrap();
-        
+
         //
         // thread::sleep(std::time::Duration::from_secs(1));
         //
@@ -739,6 +739,27 @@ exit 0
             fs::metadata(&script_file_path).expect("failed to get metadata")
                 .permissions().set_mode(0o755);
         }
+
+        let (start, receive) = bounded::<Empty>(1);
+        let mut provider_clone = provider.clone();
+        thread::spawn(move ||{
+            provider_clone.run(start).unwrap();
+        });
+        receive.recv().unwrap();
+        assert_eq!(provider.is_running(), true);
+        thread::sleep(std::time::Duration::from_secs(1));
+        provider.terminate().unwrap();
+
+        let (s1, s2, s3) = (
+            "-aHvh --no-o --no-g --stats --filter risk .~tmp~/ --exclude .~tmp~/ --safe-links ",
+            "--include=*.diff/ --include=by-hash/ --exclude=*.diff/Index --exclude=Contents* --exclude=Packages* --exclude=Sources* --exclude=Release* --exclude=InRelease --exclude=i18n/* --exclude=dep11/* --exclude=installer-*/current --exclude=ls-lR* --timeout=30 -6 ",
+            "--exclude-from "
+            );
+        let expected_output = format!("{s1}{s2}{s3}{} {} {}", provider.two_stage_rsync_config.exclude_file, 
+                                      provider.two_stage_rsync_config.upstream_url, 
+                                      provider.working_dir());
+        let logged_content = fs::read_to_string(provider.log_file()).expect("failed to read logged file");
+        assert!(logged_content.starts_with(&expected_output));
     }
     
     

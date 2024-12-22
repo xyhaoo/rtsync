@@ -1,5 +1,6 @@
 #[cfg(test)]
 mod tests {
+    use std::any::{Any, TypeId};
     use std::collections::HashMap;
     use std::fs;
     use std::fs::File;
@@ -8,7 +9,7 @@ mod tests {
     const CFG_BLOB: &str = r#"
 [global]
 name = "test_worker"
-log_dir = "/var/log/rtsync/{{.Name}}"
+log_dir = "/var/log/rtsync/{{ name }}"
 mirror_dir = "/data/mirrors"
 concurrent = 10
 interval = 240
@@ -72,6 +73,7 @@ exec_on_failure = [
     use tempfile::{Builder, TempDir};
     use std::io::{self, Write};
     use std::os::unix::fs::PermissionsExt;
+    use chrono::Duration;
     use crate::config::ProviderEnum::{Command, Rsync, TwoStageRsync};
 
     // 当配置文件有效
@@ -229,7 +231,7 @@ use_ipv6 = true
             .expect("failed to write to tmp file nest.conf");
         // 设置文件权限为 0644
         fs::set_permissions(file_nest, fs::Permissions::from_mode(0o644)).expect("failed to set permissions");
-
+        
         let cfg = load_config(Some(tmp_file_path.to_str().unwrap())).unwrap();
         assert_eq!(cfg.global.name, Some("test_worker".to_string()));
         assert_eq!(cfg.global.interval, Some(240));
@@ -281,6 +283,8 @@ use_ipv6 = true
     }
 
     use crate::provider::{new_mirror_provider, MirrorProvider};
+    use crate::two_stage_rsync_provider::TwoStageRsyncProvider;
+
     #[test]
     fn test_valid_provider(){
         //生成一个包含在临时目录（前缀为rtsync）中的文件rtsync
@@ -305,7 +309,112 @@ use_ipv6 = true
         let p = providers.get("AOSP").unwrap();
         assert_eq!(p.name(), "AOSP".to_string());
         assert_eq!(p.log_dir(), "/var/log/rtsync/AOSP".to_string());
-        assert_eq!(p.log_file(), "/var/log/rtsync/AOSP/latest.log".to_string())
+        assert_eq!(p.log_file(), "/var/log/rtsync/AOSP/latest.log".to_string());
 
+        let mut display = String::default();
+        for hook in p.hooks().lock().unwrap().iter() {
+            display = format!("{}{:?}", display.clone(), hook);
+        }
+        assert!(display.contains(r#""bash", "-c", "echo ${RTSYNC_JOB_EXIT_STATUS} > ${RTSYNC_WORKING_DIR}/exit_status""#));
+
+        let p = providers.get("debian").unwrap();
+        assert_eq!(p.name(), "debian".to_string());
+        assert_eq!(p.log_dir(), "/var/log/rtsync/debian".to_string());
+        assert_eq!(p.log_file(), "/var/log/rtsync/debian/latest.log".to_string());
+        assert_eq!(p.r#type(), TwoStageRsync);
+        assert_eq!(p.working_dir(), "/data/mirrors/debian");
+
+        let p = providers.get("fedora").unwrap();
+        assert_eq!(p.name(), "fedora".to_string());
+        assert_eq!(p.log_dir(), "/var/log/rtsync/fedora".to_string());
+        assert_eq!(p.log_file(), "/var/log/rtsync/fedora/latest.log".to_string());
+        assert_eq!(p.r#type(), Rsync);
+        assert_eq!(p.working_dir(), "/data/mirrors/fedora");
+    }
+    #[test]
+    fn test_mirror_sub_dir(){
+        //生成一个包含在临时目录（前缀为rtsync）中的文件rtsync
+        let tmp_dir = Builder::new()    // 使用tempfile生成的临时目录
+            .prefix("rtsync")
+            .tempdir().expect("failed to create tmp dir");
+        let tmp_dir_path = tmp_dir.path();
+        let tmp_file_path = tmp_dir_path.join("rtsync");
+        //使用File生成的文件，包含在临时目录内，会随其一起被删除，且文件名后面没有英文字母后缀
+        let mut tmp_file = File::create(&tmp_file_path)
+            .expect("failed to create tmp file");
+
+        const CFG_BLOB1: &str = r#"
+[global]
+name = "test_worker"
+log_dir = "/var/log/rtsync/{{ name }}"
+mirror_dir = "/data/mirrors"
+concurrent = 10
+interval = 240
+timeout = 86400
+retry = 3
+
+[manager]
+api_base = "https://127.0.0.1:5000"
+token = "some_token"
+
+[server]
+hostname = "worker1.example.com"
+listen_addr = "127.0.0.1"
+listen_port = 6000
+ssl_cert = "/etc/rtsync.d/worker1.cert"
+ssl_key = "/etc/rtsync.d/worker1.key"
+
+[[mirrors]]
+name = "ipv6s"
+use_ipv6 = true
+	[[mirrors.mirrors]]
+	name = "debians"
+	mirror_subdir = "debian"
+	provider = "two-stage-rsync"
+	stage1_profile = "debian"
+
+		[[mirrors.mirrors.mirrors]]
+		name = "debian-security"
+		upstream = "rsync://test.host/debian-security/"
+		[[mirrors.mirrors.mirrors]]
+		name = "ubuntu"
+		stage1_profile = "ubuntu"
+		upstream = "rsync://test.host2/ubuntu/"
+	[[mirrors.mirrors]]
+	name = "debian-cd"
+	provider = "rsync"
+	upstream = "rsync://test.host3/debian-cd/"
+		"#;
+
+        // 写入临时文件
+        tmp_file.write_all(CFG_BLOB1.as_bytes()).expect("failed to write to tmp file");
+        let cfg = load_config(Some(tmp_file_path.to_str().unwrap())).unwrap();
+        
+        let mut providers: HashMap<String, Box<dyn MirrorProvider>> = HashMap::new();
+        for m in &cfg.mirrors {
+            let p = new_mirror_provider(m.clone(), cfg.clone());
+            providers.insert(p.name(), p);
+        }
+        let p = providers.get("debian-security").unwrap();
+        assert_eq!(p.name(), "debian-security".to_string());
+        assert_eq!(p.log_dir(), "/var/log/rtsync/debian-security");
+        assert_eq!(p.log_file(), "/var/log/rtsync/debian-security/latest.log");
+        assert_eq!(p.r#type(), TwoStageRsync);
+        assert_eq!(p.working_dir(), "/data/mirrors/debian/debian-security");
+
+        let p = providers.get("ubuntu").unwrap();
+        assert_eq!(p.name(), "ubuntu".to_string());
+        assert_eq!(p.log_dir(), "/var/log/rtsync/ubuntu");
+        assert_eq!(p.log_file(), "/var/log/rtsync/ubuntu/latest.log");
+        assert_eq!(p.r#type(), TwoStageRsync);
+        assert_eq!(p.working_dir(), "/data/mirrors/debian/ubuntu");
+        
+        let p = providers.get("debian-cd").unwrap();
+        assert_eq!(p.name(), "debian-cd".to_string());
+        assert_eq!(p.log_dir(), "/var/log/rtsync/debian-cd");
+        assert_eq!(p.log_file(), "/var/log/rtsync/debian-cd/latest.log");
+        assert_eq!(p.r#type(), Rsync);
+        assert_eq!(p.working_dir(), "/data/mirrors/debian-cd");
+        assert_eq!(p.timeout(), Duration::seconds(86400));
     }
 }

@@ -43,7 +43,9 @@ impl JobHook for ZfsHook {
             self.print_help_message(working_dir, provider_name);
             return Err(err.into());
         }
-        let output = Command::new("mountpoint")
+        let output = Command::new("sh")
+            .arg("-c")
+            .arg("mountpoint")
             .arg("-q")
             .arg(&working_dir)
             .output()?;

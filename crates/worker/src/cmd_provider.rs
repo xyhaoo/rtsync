@@ -88,11 +88,11 @@ impl CmdProvider{
             ctx.set(_LOG_FILE_KEY.to_string(), value);
         }
         drop(base_provider_lock);
-        
+
         let cmd: Vec<String> = Shlex::new(&*c.command).collect();
-        if cmd.len() == 0 {
-            return Err("未检测到命令".into())
-        }
+        // if cmd.len() == 0 {
+        //     return Err("未检测到命令".into())
+        // }
 
         println!("debug: provider.cmd: {:?}", cmd);
 
@@ -141,12 +141,12 @@ impl CmdProvider{
         let mut cmd_job: CmdJob;
         let mut args: Vec<String> = Vec::new();
         let use_docker = base_provider_lock.docker_ref().is_some();
-        
+
         if let Some(d) = base_provider_lock.docker_ref().as_ref(){
             let c = "docker";
             args.extend(vec!["run".to_string(), "--rm".to_string(),
                              // "-a".to_string(), "STDOUT".to_string(), "-a".to_string(), "STDERR".to_string(),
-                             "--name".to_string(), base_provider_lock.name().parse().unwrap(),
+                             "--name".to_string(), d.name(base_provider_lock.name().parse().unwrap()),
                              "-w".to_string(), working_dir.clone()]);
             // 指定用户
             unsafe {
@@ -174,18 +174,18 @@ impl CmdProvider{
             args.push(d.image.clone());
             // 添加command
             args.extend(self.command.iter().cloned());
-            
+
             cmd_job = CmdJob::new(Command::new(c), working_dir.clone(), env.clone());
             { cmd_job.cmd.lock().unwrap().args(&args); }
             
         }else {
             if self.command.len() == 1{
                 cmd_job = CmdJob::new(Command::new(&self.command[0]), working_dir.clone(), env.clone());
-                
+
             }else if self.command.len() > 1 {
                 let c = self.command[0].clone();
                 let args = self.command[1..].to_vec();
-                
+
                 cmd_job = CmdJob::new(Command::new(c), working_dir.clone(), env.clone());
                 { cmd_job.cmd.lock().unwrap().args(&args); }
             }else {
@@ -220,7 +220,7 @@ impl CmdProvider{
         drop(base_provider_lock);
     }
 
-    
+
     
 }
 
@@ -284,21 +284,21 @@ impl MirrorProvider for CmdProvider{
         }
         Ok(())
     }
-    
+
     fn start(&self) -> Result<(), Box<dyn Error>> {
         if self.is_running(){
             return Err("provider现在正在运行".into())
         }
         self.cmd();
         let mut base_provider_lock = self.base_provider.write().unwrap();
-        
+
         base_provider_lock.prepare_log_file(false)?;
         base_provider_lock.start()?;
         base_provider_lock.is_running.store(true, Ordering::SeqCst);
         
         println!("debug: 将is_running字段设置为true :{}", base_provider_lock.name());
         debug!("将is_running字段设置为true :{}", base_provider_lock.name());
-        
+
         drop(base_provider_lock);
         Ok(())
     }
@@ -314,7 +314,7 @@ impl MirrorProvider for CmdProvider{
     // fn zfs(&self) -> Option<&ZfsHook> {
     //     self.base_provider.zfs.as_ref()
     // }
-    // 
+    //
     fn docker(&self) -> Arc<Option<DockerHook>> {
         self.base_provider.read().unwrap().docker_ref()
     }

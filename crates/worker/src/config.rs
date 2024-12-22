@@ -44,6 +44,7 @@ pub(crate) struct Config {
     pub(crate) btrfs_snapshot: BtrfsSnapshotConfig,
     pub(crate) docker: DockerConfig,
     pub(crate) include: IncludeConfig,
+    #[serde(rename = "mirrors")]
     pub(crate) mirrors_config: Vec<MirrorConfig>,
     pub(crate) mirrors: Vec<MirrorConfig>,
 }
@@ -70,8 +71,7 @@ pub(crate) struct ManagerConfig{
     //该选项覆盖APIBase
     api_list: Option<Vec<String>>,
     ca_cert: Option<String>,
-    // Token: String   绑定 worker.conf 文件的"token"
-    token: Option<String>,
+    // token: Option<String>,
 }
 impl ManagerConfig {
     //获取api_list，如果为空，就获取api_base，将其放入vec中返回
@@ -104,9 +104,13 @@ pub(crate) struct CGroupConfig {
     pub(crate) enable: Option<bool>,
     base_path: Option<String>,
     pub(crate) group: Option<String>,
+    #[serde(rename = "subsystem")]
     sub_system: Option<String>,
+    #[serde(rename = "isUnified")]
     pub(crate) is_unified: Option<bool>,
+    #[serde(rename = "cgMgrV1")]
     cg_mgr_v1: Option<String>,
+    #[serde(rename = "cgMgrV2")]
     pub(crate) cg_mgr_v2: Option<String>,
 }
 
@@ -114,6 +118,7 @@ pub(crate) struct CGroupConfig {
 #[serde(default)]
 pub(crate) struct ZFSConfig {
     pub(crate) enable: Option<bool>,
+    #[serde(rename = "zpool")]
     pub(crate) z_pool: Option<String>,
 }
 

@@ -1,4 +1,5 @@
 use std::error::Error;
+use std::fmt::Debug;
 use std::sync::{Arc, Mutex};
 use crate::context::Context;
 use enum_dispatch::enum_dispatch;
@@ -20,7 +21,7 @@ hooks to exec before/after syncing
                                                                                        success
 */
 #[enum_dispatch]
-pub(crate) trait JobHook{
+pub(crate) trait JobHook: Debug{
     fn pre_job(&self, 
                _working_dir: String, 
                _provider_name: String) 
@@ -85,6 +86,7 @@ impl_into_box_for!(LogLimiter);
 impl_into_box_for!(ZfsHook);
 
 #[enum_dispatch(JobHook, JobIntoBox)]
+#[derive(Debug)]
 pub(crate) enum HookType{
     #[cfg(target_os = "linux")]
     Btrfs(btrfs_snapshot_hook::BtrfsSnapshotHook),

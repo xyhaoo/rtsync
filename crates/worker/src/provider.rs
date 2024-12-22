@@ -13,6 +13,7 @@ use chrono::{DateTime, Duration, Utc};
 use regex::Regex;
 use log::{error, warn};
 use tera::Tera;
+use tokio::time::timeout;
 use crate::cmd_provider::{CmdConfig, CmdProvider};
 use crate::docker::DockerHook;
 use crate::rsync_provider::{RsyncConfig, RsyncProvider};
@@ -81,11 +82,11 @@ pub trait MirrorProvider {
 // new_mirror_provider使用一个MirrorConfig和全局的Config创建一个MirrorProvider实例
 pub(crate) fn new_mirror_provider(mut mirror: MirrorConfig, cfg: Config) -> Box<dyn MirrorProvider>
 {
-    // 使用MirrorConfig中的name字段匹配log_dir中的占位符
+    // 使用MirrorConfig中的name字段填充log_dir中的占位符(如果有）
     let format_log_dir = |log_dir: String, m: &MirrorConfig|-> String{
         let mut tera = Tera::default(); // 创建一个空的模板引擎
         let mut context = tera::Context::new();
-        context.insert("name", &m.name); // 将结构体中的值插入模板上下文
+        context.insert("name", &m.name.clone().unwrap()); // 将结构体中的值插入模板上下文
 
         let formatted = tera
             .render_str(&*log_dir, &context) // 渲染模板
@@ -104,15 +105,15 @@ pub(crate) fn new_mirror_provider(mut mirror: MirrorConfig, cfg: Config) -> Box<
             .join(mirror.name.clone().unwrap_or_default())
             .display().to_string());
     
-    if let Some(0) = mirror.interval{
+    if mirror.interval.is_none() || mirror.interval.is_some_and(|interval| interval == 0) {
         mirror.interval = cfg.global.interval.clone()
     }
 
-    if let Some(0) = mirror.retry{
+    if mirror.retry.is_none() || mirror.retry.is_some_and(|retry| retry == 0) {
         mirror.retry = cfg.global.retry.clone()
     }
 
-    if let Some(0) = mirror.timeout {
+    if mirror.timeout.is_none() || mirror.timeout.is_some_and(|timeout| timeout == 0) {
         mirror.timeout = cfg.global.timeout.clone()
     }
     
@@ -221,7 +222,7 @@ pub(crate) fn new_mirror_provider(mut mirror: MirrorConfig, cfg: Config) -> Box<
             }
 
         },
-        _ => {panic!("mirror的provider字段无效")}
+        _ => { panic!("mirror的provider字段无效") }
     }
 
     // add logging hook

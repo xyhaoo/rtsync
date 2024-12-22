@@ -197,7 +197,7 @@ impl TwoStageRsyncProvider {
             let c = "docker";
             args.extend(vec!["run".to_string(), "--rm".to_string(),
                              "-a".to_string(), "STDOUT".to_string(), "-a".to_string(), "STDERR".to_string(),
-                             "--name".to_string(), base_provider_lock.name().parse().unwrap(),
+                             "--name".to_string(), d.name(base_provider_lock.name().parse().unwrap()),
                              "-w".to_string(), working_dir.clone()]);
             // 指定用户
             unsafe {
@@ -232,14 +232,18 @@ impl TwoStageRsyncProvider {
             if cmd_and_args.len() == 1{
                 // cmd修改与rsync_provider相同
                 cmd_job = CmdJob::new(Command::new(&cmd_and_args[0]), working_dir.clone(), env.clone());
-                
+
             }else if cmd_and_args.len() > 1 {
                 // cmd修改与rsync_provider相同
                 let c = cmd_and_args[0].clone();
                 let args = cmd_and_args[1..].to_vec();
                 cmd_job = CmdJob::new(Command::new(c), working_dir.clone(), env.clone());
-                { cmd_job.cmd.lock().unwrap().args(&args); }
-                
+                { 
+                    cmd_job.cmd.lock().unwrap()
+                        // .arg(c)
+                        .args(&args); 
+                }
+
             }else {
                 panic!("命令的长度最少是1！")
             }
@@ -272,7 +276,7 @@ impl TwoStageRsyncProvider {
         base_provider_lock.cmd = Some(cmd_job);
         drop(base_provider_lock);
     }
-    
+
 }
 
 
@@ -280,7 +284,7 @@ impl MirrorProvider for TwoStageRsyncProvider {
     fn name(&self) -> String {
         self.base_provider.read().unwrap().name()
     }
-    
+
     fn upstream(&self) -> String {
         self.two_stage_rsync_config.upstream_url.clone()
     }
@@ -288,7 +292,7 @@ impl MirrorProvider for TwoStageRsyncProvider {
     fn r#type(&self) -> ProviderEnum {
         ProviderEnum::TwoStageRsync
     }
-    
+
     fn run(&mut self, started: Sender<Empty>) -> Result<(), Box<dyn Error>> {
         if self.is_running(){
             return Err("provider现在正在运行".into())
@@ -296,7 +300,7 @@ impl MirrorProvider for TwoStageRsyncProvider {
         let base_provider_lock = self.base_provider.write().unwrap();
         self.data_size = Arc::from(String::new());
         drop(base_provider_lock);
-        
+
         let stages = vec![1,2];
         for stage in stages{
             let mut command = vec![self.two_stage_rsync_config.rsync_cmd.clone()];
@@ -318,6 +322,7 @@ impl MirrorProvider for TwoStageRsyncProvider {
 
             println!("debug: 将is_running字段设置为true :{}", base_provider_lock.name());
             debug!("将is_running字段设置为true :{}", base_provider_lock.name());
+            started.send(()).unwrap();
             drop(base_provider_lock);
 
             let base_provider_lock = self.base_provider.read().unwrap();

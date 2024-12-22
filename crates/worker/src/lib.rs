@@ -23,5 +23,7 @@ mod config_test;
 mod provider_test;
 mod docker_test;
 mod exec_post_test;
+mod zfs_hook_test;
+mod cgroup_test;
 
 

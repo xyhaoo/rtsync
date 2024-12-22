@@ -38,9 +38,9 @@ impl ExecPostHook {
     pub(crate) fn new(exec_on: ExecOn, command: &str) -> Result<ExecPostHook, Box<dyn Error>>
     {
         let cmd: Vec<String> = Shlex::new(command).collect();
-        if cmd.len() == 0 {
-            return Err("未检测到命令".into())
-        }
+        // if cmd.len() == 0 {
+        //     return Err("未检测到命令".into())
+        // }
         Ok(ExecPostHook{
             exec_on,
             command: cmd,
