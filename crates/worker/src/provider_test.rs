@@ -2,17 +2,19 @@
 mod tests{
     use std::{fs, thread};
     use std::cell::RefCell;
-    use std::error::Error;
+    use anyhow::{anyhow, Result};
     use std::fs::File;
     use std::io::Write;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
-    use std::sync::{Arc, Mutex};
-    use tokio::sync::RwLock;
+    use std::sync::Arc;
+    use std::sync::atomic::Ordering::SeqCst;
+    use std::sync::{RwLock, Mutex};
+    use tokio::sync::mpsc::channel;
     use anymap::AnyMap;
     use chrono::Duration;
     use tempfile::Builder;
-    use crossbeam_channel::{Sender, Receiver, bounded};
+    use tokio;
 
     use crate::cmd_provider::{CmdConfig, CmdProvider};
     use crate::common::Empty;
@@ -38,8 +40,8 @@ mod tests{
         Ok(path)
     }
 
-    #[test]
-    fn rsync_provider_test(){
+    #[tokio::test]
+    async fn rsync_provider_test(){
         let tmp_dir = Builder::new()
             .prefix("rtsync")
             .tempdir().expect("failed to create tmp dir");
@@ -66,46 +68,41 @@ mod tests{
             interval: Duration::seconds(600),
             ..RsyncConfig::default()
         };
-        let provider = RsyncProvider::new(c.clone()).unwrap();
+        let provider = RsyncProvider::new(c.clone()).await.unwrap();
 
         assert_eq!(provider.r#type(), ProviderEnum::Rsync);
-        assert_eq!(provider.name(), c.name);
-        assert_eq!(provider.working_dir(), c.working_dir);
-        assert_eq!(provider.log_dir(), c.log_dir);
-        assert_eq!(provider.log_file(), c.log_file);
-        assert_eq!(provider.interval(), c.interval);
-        assert_eq!(provider.timeout(), c.timeout);
+        assert_eq!(provider.name().await, c.name);
+        assert_eq!(provider.working_dir().await, c.working_dir);
+        assert_eq!(provider.log_dir().await, c.log_dir);
+        assert_eq!(provider.log_file().await, c.log_file);
+        assert_eq!(provider.interval().await, c.interval);
+        assert_eq!(provider.timeout().await, c.timeout);
 
 
-        // test_entering_and_exiting_a_context(provider, c);
-        test_run(provider, c, script_file);
+        // test_entering_and_exiting_a_context(provider, c).await;
+        test_run(provider, c, script_file).await;
 
     }
-    fn test_entering_and_exiting_a_context(mut provider: RsyncProvider, c: RsyncConfig){
-        let mut func = || {
-            let ctx = provider.enter_context();
-            assert_eq!(provider.working_dir(), c.working_dir);
-            let new_working_dir = "/srv/mirror/working/tuna".to_string();
-            let mut value = AnyMap::new();
-            value.insert(new_working_dir.clone());
-            if let Ok(mut ctx) = ctx.lock(){
-                if let Some(context) = ctx.as_mut(){
-                    context.set(_WORKING_DIR_KEY.parse().unwrap(), value);
-                }else { 
-                    panic!("没有ctx字段");
-                }
-            }else { 
-                panic!("加锁失败");
-            }
-            assert_eq!(provider.working_dir(), new_working_dir);
-            provider.exit_context();
-        };
-        func();
-        assert_eq!(provider.working_dir(), c.working_dir);
+    async fn test_entering_and_exiting_a_context(mut provider: RsyncProvider, c: RsyncConfig){
+        let ctx = provider.enter_context().await;
+        assert_eq!(provider.working_dir().await, c.working_dir);
+        let new_working_dir = "/srv/mirror/working/tuna".to_string();
+        let mut value = AnyMap::new();
+        value.insert(new_working_dir.clone());
+        
+        if let Some(context) = ctx.lock().await.as_mut(){
+            context.set(_WORKING_DIR_KEY.parse().unwrap(), value);
+        }else {
+            panic!("没有ctx字段");
+        }
+        
+        assert_eq!(provider.working_dir().await, new_working_dir);
+        provider.exit_context().await;
+        assert_eq!(provider.working_dir().await, c.working_dir);
     }
 
     // 使用一个生成的脚本文件作为rsync_provider要执行的命令，模拟rsync命令运行
-    fn test_run(mut provider: RsyncProvider, c: RsyncConfig, mut script_file: File){
+    async fn test_run(mut provider: RsyncProvider, c: RsyncConfig, mut script_file: File){
         let script_content = r#"#!/bin/bash
 echo "syncing to $(pwd)"
 echo $RSYNC_PASSWORD $@
@@ -116,7 +113,8 @@ exit 0
 			"#;
         script_file.write_all(script_content.as_bytes()).expect("failed to write to tmp file");
 
-        let target_dir = resolve_symlink(PathBuf::from(provider.working_dir())).unwrap();
+        let working_dir = provider.working_dir().await;
+        let target_dir = resolve_symlink(PathBuf::from(working_dir)).unwrap();
         
         let s1 = "-aHvh --no-o --no-g --stats --filter risk .~tmp~/ --exclude .~tmp~/ ";
         let s2 = "--delete --delete-after --delay-updates --safe-links ";
@@ -125,18 +123,18 @@ exit 0
                                       target_dir.to_string_lossy(),
                                       format!("{s1}{s2}{s3} {} {}", 
                                               provider.rsync_config.upstream_url, 
-                                              provider.working_dir()));
+                                              provider.working_dir().await));
 
 
-        provider.run(bounded(1).0).unwrap();
-        let logged_content = fs::read_to_string(provider.log_file()).unwrap();
+        provider.run(channel(1).0).await.unwrap();
+        let logged_content = fs::read_to_string(provider.log_file().await).unwrap();
         assert_eq!(expected_output, logged_content);
         assert_eq!(provider.data_size(), "1.33T".to_string());
     }
 
-    #[test]
+    #[tokio::test]
     // 测试当rsync参数错误时，能否将错误信息写入log_file
-    fn test_rsync_fails(){
+    async fn test_rsync_fails(){
         let tmp_dir = Builder::new()
             .prefix("rtsync")
             .tempdir().expect("failed to create tmp dir");
@@ -158,16 +156,16 @@ exit 0
 
         // let x = translate_rsync_error_code(1).expect("failed to translate rsync error");
 
-        let mut provider = RsyncProvider::new(c.clone()).unwrap();
-        assert!(provider.run(bounded(1).0).is_err());
-        let logged_content = fs::read_to_string(provider.log_file()).unwrap();
+        let mut provider = RsyncProvider::new(c.clone()).await.unwrap();
+        assert!(provider.run(channel(1).0).await.is_err());
+        let logged_content = fs::read_to_string(provider.log_file().await).unwrap();
         println!("{}", logged_content);
         assert!(logged_content.contains("Syntax or usage error"));
 
     }
     
-    #[test]
-    fn test_rsync_provider_with_password(){
+    #[tokio::test]
+    async fn test_rsync_provider_with_password(){
         let tmp_dir = Builder::new()
             .prefix("rtsync")
             .tempdir().expect("failed to create tmp dir");
@@ -200,12 +198,12 @@ exit 0
             interval: Duration::seconds(600),
             ..Default::default()
         };
-        let mut provider = RsyncProvider::new(c.clone()).unwrap();
-        assert_eq!(provider.name(), c.name);
-        assert_eq!(provider.working_dir(), c.working_dir);
-        assert_eq!(provider.log_dir(), c.log_dir);
-        assert_eq!(provider.log_file(), c.log_file);
-        assert_eq!(provider.interval(), c.interval);
+        let mut provider = RsyncProvider::new(c.clone()).await.unwrap();
+        assert_eq!(provider.name().await, c.name);
+        assert_eq!(provider.working_dir().await, c.working_dir);
+        assert_eq!(provider.log_dir().await, c.log_dir);
+        assert_eq!(provider.log_file().await, c.log_file);
+        assert_eq!(provider.interval().await, c.interval);
         
         // test run
         let script_content = r#"#!/bin/bash
@@ -218,7 +216,7 @@ exit 0
 
         script_file.write_all(script_content.as_bytes()).expect("failed to write to tmp file");
 
-        let target_dir = resolve_symlink(PathBuf::from(provider.working_dir())).unwrap();
+        let target_dir = resolve_symlink(PathBuf::from(provider.working_dir().await)).unwrap();
 
         let s1 = "-aHvh --no-o --no-g --stats --filter risk .~tmp~/ --exclude .~tmp~/ ";
         let s2 = "--delete --delete-after --delay-updates --safe-links ";
@@ -230,7 +228,7 @@ exit 0
                                               provider.rsync_config.password,
                                               proxy_addr,
                                               provider.rsync_config.upstream_url,
-                                              provider.working_dir()));
+                                              provider.working_dir().await));
 
         //////////////////////////////////
 //         let fff = "/root/documents/rust/fff";
@@ -253,13 +251,13 @@ exit 0
 //         //////////////////////////////////
 
 
-        provider.run(bounded(1).0).unwrap();
-        let logged_content = fs::read_to_string(provider.log_file()).unwrap();
+        provider.run(channel(1).0).await.unwrap();
+        let logged_content = fs::read_to_string(provider.log_file().await).unwrap();
         assert_eq!(expected_output, logged_content);
     }
     
-    #[test]
-    fn test_rsync_provider_with_overridden_options(){
+    #[tokio::test]
+    async fn test_rsync_provider_with_overridden_options(){
         let tmp_dir = Builder::new()
             .prefix("rtsync")
             .tempdir().expect("failed to create tmp dir");
@@ -285,12 +283,12 @@ exit 0
             interval: Duration::seconds(600),
             ..Default::default()
         };
-        let mut provider = RsyncProvider::new(c.clone()).unwrap();
-        assert_eq!(provider.name(), c.name);
-        assert_eq!(provider.working_dir(), c.working_dir);
-        assert_eq!(provider.log_dir(), c.log_dir);
-        assert_eq!(provider.log_file(), c.log_file);
-        assert_eq!(provider.interval(), c.interval);
+        let mut provider = RsyncProvider::new(c.clone()).await.unwrap();
+        assert_eq!(provider.name().await, c.name);
+        assert_eq!(provider.working_dir().await, c.working_dir);
+        assert_eq!(provider.log_dir().await, c.log_dir);
+        assert_eq!(provider.log_file().await, c.log_file);
+        assert_eq!(provider.interval().await, c.interval);
 
         // test run
         let script_content = r#"#!/bin/bash
@@ -303,22 +301,22 @@ exit 0
 
 
         script_file.write_all(script_content.as_bytes()).expect("failed to write to tmp file");
-        let target_dir = resolve_symlink(PathBuf::from(provider.working_dir())).unwrap();
+        let target_dir = resolve_symlink(PathBuf::from(provider.working_dir().await)).unwrap();
         
         let expected_output = format!("syncing to {}\n-aHvh --no-o --no-g --stats -6 --delete-excluded {} {}\nDone\n", 
                                       target_dir.to_string_lossy(), 
                                       provider.rsync_config.upstream_url, 
-                                      provider.working_dir());
+                                      provider.working_dir().await);
         
-        provider.run(bounded(1).0).unwrap();
-        let logged_content = fs::read_to_string(provider.log_file()).unwrap();
+        provider.run(channel(1).0).await.unwrap();
+        let logged_content = fs::read_to_string(provider.log_file().await).unwrap();
         assert_eq!(logged_content, expected_output);
 
     }
 
-    #[test]
+    #[tokio::test]
     // 创建一个临时容器，将本机临时文件目录挂载到容器指定位置，然后在容器内运行目录内的脚本
-    fn test_rsync_in_docker(){
+    async fn test_rsync_in_docker(){
         let tmp_dir = Builder::new()
             .prefix("rtsync")
             .tempdir().expect("failed to create tmp dir");
@@ -380,39 +378,39 @@ done
             ..Default::default()
         };
         
-        let mut provider = new_mirror_provider(c.clone(), g);
+        let mut provider = new_mirror_provider(c.clone(), g).await;
         assert_eq!(provider.r#type(), ProviderEnum::Rsync);
-        assert_eq!(provider.name(), c.name.unwrap());
-        assert_eq!(provider.working_dir(), c.mirror_dir.unwrap());
-        assert_eq!(provider.log_dir(), c.log_dir.unwrap());
+        assert_eq!(provider.name().await, c.name.unwrap());
+        assert_eq!(provider.working_dir().await, c.mirror_dir.unwrap());
+        assert_eq!(provider.log_dir().await, c.log_dir.unwrap());
 
 
 
-        let provider_name = provider.name();
-        let log_dir = provider.log_dir();
-        let log_file = provider.log_file();
-        let working_dir = provider.working_dir();
-        let context = provider.context();
+        let provider_name = provider.name().await;
+        let log_dir = provider.log_dir().await;
+        let log_file = provider.log_file().await;
+        let working_dir = provider.working_dir().await;
+        let context = provider.context().await;
 
-        for hook in provider.hooks().lock().unwrap().iter() {
+        for hook in provider.hooks().await.lock().await.iter() {
             hook.pre_exec(provider_name.clone(),
                           log_dir.clone(),
                           log_file.clone(),
                           working_dir.clone(),
-                          context.clone()).unwrap()
+                          context.clone()).await.unwrap();
         }
-        provider.run(bounded(1).0).unwrap();
-        for hook in provider.hooks().lock().unwrap().iter() {
-            hook.post_exec(context.clone(), provider_name.clone()).unwrap()
+        provider.run(channel(1).0).await.unwrap();
+        for hook in provider.hooks().await.lock().await.iter() {
+            hook.post_exec(context.clone(), provider_name.clone()).await.unwrap();
         }
-        println!("{}", provider.log_file());
-        let logged_content = fs::read_to_string(provider.log_file()).unwrap();
+        println!("{}", provider.log_file().await);
+        let logged_content = fs::read_to_string(provider.log_file().await).unwrap();
         assert_eq!(logged_content, "__some_pattern".to_string());
     }
     
     
-    #[test]
-    fn cmd_provider_test(){
+    #[tokio::test]
+    async fn cmd_provider_test(){
         let tmp_dir = Builder::new()
             .prefix("rtsync")
             .tempdir().expect("failed to create tmp dir");
@@ -435,20 +433,20 @@ done
             env: [("AOSP_REPO_BIN".into(), "/usr/local/bin/repo".into())].into(),
             ..CmdConfig::default()
         };
-        let provider = CmdProvider::new(c.clone()).unwrap();
+        let provider = CmdProvider::new(c.clone()).await.unwrap();
         assert_eq!(provider.r#type(), ProviderEnum::Command);
-        assert_eq!(provider.name(), c.name);
-        assert_eq!(provider.working_dir(), c.working_dir);
-        assert_eq!(provider.log_dir(), c.log_dir);
-        assert_eq!(provider.log_file(), c.log_file);
-        assert_eq!(provider.interval(), c.interval);
+        assert_eq!(provider.name().await, c.name);
+        assert_eq!(provider.working_dir().await, c.working_dir);
+        assert_eq!(provider.log_dir().await, c.log_dir);
+        assert_eq!(provider.log_file().await, c.log_file);
+        assert_eq!(provider.interval().await, c.interval);
 
-        // test_run_simple_command(provider, script_file, script_file_path);
-        // test_command_fails(provider, script_file, script_file_path);
-        test_killing_a_long_job(provider, script_file, script_file_path);
+        // test_run_simple_command(provider, script_file, script_file_path).await;
+        // test_command_fails(provider, script_file, script_file_path).await;
+        test_killing_a_long_job(provider, script_file, script_file_path).await;
 
     }
-    fn test_run_simple_command(mut provider: CmdProvider, mut script_file: File, script_file_path: PathBuf){
+    async fn test_run_simple_command(mut provider: CmdProvider, mut script_file: File, script_file_path: PathBuf){
         let script_content = r#"#!/bin/bash
 echo $RTSYNC_WORKING_DIR
 echo $RTSYNC_MIRROR_NAME
@@ -463,21 +461,21 @@ echo $AOSP_REPO_BIN
 
 
         let expected_output = format!("{}\n{}\n{}\n{}\n{}\n",
-                                      provider.working_dir(),
-                                      provider.name(),
-                                      provider.cmd_config.upstream_url, provider.log_file(),
+                                      provider.working_dir().await,
+                                      provider.name().await,
+                                      provider.cmd_config.upstream_url, provider.log_file().await,
                                       "/usr/local/bin/repo");
 
         let ridden_script_content = fs::read(&script_file_path).unwrap();
         assert_eq!(script_content.as_bytes(), ridden_script_content);
 
-        provider.run(bounded(1).0).unwrap();
+        provider.run(channel(1).0).await.unwrap();
 
-        let logged_content = fs::read_to_string(&provider.log_file()).unwrap();
+        let logged_content = fs::read_to_string(&provider.log_file().await).unwrap();
         assert_eq!(logged_content, expected_output);
     }
 
-    fn test_command_fails(mut provider: CmdProvider, mut script_file: File, script_file_path: PathBuf){
+    async fn test_command_fails(mut provider: CmdProvider, mut script_file: File, script_file_path: PathBuf){
         let script_content = r#"exit 1"#;
         {
             script_file.write_all(script_content.as_bytes()).expect("failed to write to tmp file");
@@ -488,13 +486,13 @@ echo $AOSP_REPO_BIN
         let ridden_script_content = fs::read(&script_file_path).unwrap();
         assert_eq!(script_content.as_bytes(), ridden_script_content);
 
-        assert!(provider.run(bounded(1).0).is_err());
+        assert!(provider.run(channel(1).0).await.is_err());
     }
 
-    // 开启一个线程执行provider.run()，在主线程将其结束
-    fn test_killing_a_long_job(provider: CmdProvider, mut script_file: File, script_file_path: PathBuf){
+    // 异步执行provider.run()，在主线程将其结束
+    async fn test_killing_a_long_job(provider: CmdProvider, mut script_file: File, script_file_path: PathBuf){
         let script_content = r#"#!/bin/bash
-sleep 7
+sleep 10
 			"#;
         {
             script_file.write_all(script_content.as_bytes()).expect("failed to write to tmp file");
@@ -502,47 +500,22 @@ sleep 7
                 .permissions().set_mode(0o755);
         }
 
-        let (start, receive) = bounded::<Empty>(1);
+        
+        let (start, mut receive) = channel(1);
         let mut provider_clone = provider.clone();
-        thread::spawn(move ||{
-            provider_clone.run(start).unwrap();
+        let handler = tokio::spawn(async move {
+            assert!(provider_clone.run(start).await.is_err());
         });
-        receive.recv().unwrap();
-        assert_eq!(provider.is_running(), true);
-        thread::sleep(std::time::Duration::from_secs(1));
-        provider.terminate().unwrap();
-
-        //
-        // thread::sleep(std::time::Duration::from_secs(1));
-        //
-        // assert_eq!(provider.is_running(), true);
-        // provider.terminate().unwrap();
-
-        // let provider = Arc::new(RwLock::new(provider));
-        // let provider_clone = provider.clone();
-        // let (start, receive) = bounded::<Empty>(1);
-        // let handler = thread::spawn(move || {
-        //
-        //     let mut provider = provider_clone.try_write().unwrap();
-        //     provider.run(start).unwrap();
-        //     drop(provider);
-        // });
-        // receive.recv().unwrap();
-        // // thread::sleep(std::time::Duration::from_secs(1));
-        //
-        // let provider = provider.try_read().unwrap();
-        // assert_eq!(provider.is_running(), true);
-        // thread::sleep(std::time::Duration::from_secs(1));
-        // drop(provider);
-        // // assert_eq!(provider.try_read().unwrap().is_running(), true);
-        // // let provider = provider.try_write().unwrap();
-        // // provider.terminate().unwrap();
-        //
-        // handler.join().unwrap();
+        receive.recv().await.unwrap();
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        assert_eq!(provider.is_running().await, true);
+        provider.terminate().await.unwrap();
+        handler.await.unwrap();
+        
     }
 
-    #[test]
-    fn test_cmd_provider_without_log_file() {
+    #[tokio::test]
+    async fn test_cmd_provider_without_log_file() {
         let tmp_dir = Builder::new()
             .prefix("rtsync")
             .tempdir().expect("failed to create tmp dir");
@@ -559,20 +532,20 @@ sleep 7
             ..CmdConfig::default()
         };
 
-        let mut provider = CmdProvider::new(c.clone()).unwrap();
+        let mut provider = CmdProvider::new(c.clone()).await.unwrap();
         assert_eq!(provider.is_master(), false);
         assert!(provider.zfs().is_none());
         assert_eq!(provider.r#type(), ProviderEnum::Command);
-        assert_eq!(provider.working_dir(), c.working_dir);
-        assert_eq!(provider.log_dir(), c.log_dir);
-        assert_eq!(provider.log_file(), c.log_file);
-        assert_eq!(provider.interval(), c.interval);
+        assert_eq!(provider.working_dir().await, c.working_dir);
+        assert_eq!(provider.log_dir().await, c.log_dir);
+        assert_eq!(provider.log_file().await, c.log_file);
+        assert_eq!(provider.interval().await, c.interval);
 
-        provider.run(bounded(1).0).unwrap();
+        provider.run(channel(1).0).await.unwrap();
     }
 
-    #[test]
-    fn test_cmd_provider_with_reg_exprs(){
+    #[tokio::test]
+    async fn test_cmd_provider_with_reg_exprs(){
         let tmp_dir = Builder::new()
             .prefix("rtsync")
             .tempdir().expect("failed to create tmp dir");
@@ -591,61 +564,61 @@ sleep 7
             interval: Duration::seconds(600),
             ..CmdConfig::default()
         };
-        test_fail_on_match_regex_matches(c.clone());
-        test_fail_on_match_regex_does_not_matches(c.clone());
-        test_fail_on_match_regex_meets_dev_null(c.clone());
-        test_size_pattern_regex_matches(c.clone());
-        test_size_pattern_regex_does_not_matches(c.clone());
-        test_size_pattern_regex_meets_dev_null(c.clone());
+        test_fail_on_match_regex_matches(c.clone()).await;
+        test_fail_on_match_regex_does_not_matches(c.clone()).await;
+        test_fail_on_match_regex_meets_dev_null(c.clone()).await;
+        test_size_pattern_regex_matches(c.clone()).await;
+        test_size_pattern_regex_does_not_matches(c.clone()).await;
+        test_size_pattern_regex_meets_dev_null(c.clone()).await;
     }
-    fn test_fail_on_match_regex_matches(mut c: CmdConfig) {
+    async fn test_fail_on_match_regex_matches(mut c: CmdConfig) {
         c.fail_on_match = "[a-z]+".to_string();
-        let mut provider = CmdProvider::new(c).unwrap();
-        assert!(provider.run(bounded(1).0).is_err());
+        let mut provider = CmdProvider::new(c).await.unwrap();
+        assert!(provider.run(channel(1).0).await.is_err());
         assert_eq!(provider.data_size(), "");
     }
 
-    fn test_fail_on_match_regex_does_not_matches(mut c: CmdConfig) {
+    async fn test_fail_on_match_regex_does_not_matches(mut c: CmdConfig) {
         c.fail_on_match = "load average_".to_string();
-        let mut provider = CmdProvider::new(c).unwrap();
-        provider.run(bounded(1).0).unwrap();
+        let mut provider = CmdProvider::new(c).await.unwrap();
+        provider.run(channel(1).0).await.unwrap();
     }
 
-    fn test_fail_on_match_regex_meets_dev_null(mut c: CmdConfig) {
+    async fn test_fail_on_match_regex_meets_dev_null(mut c: CmdConfig) {
         c.fail_on_match = "load average".to_string();
         c.log_file = "/dev/null".to_string();
-        let mut provider = CmdProvider::new(c).unwrap();
-        assert!(provider.run(bounded(1).0).is_err());
+        let mut provider = CmdProvider::new(c).await.unwrap();
+        assert!(provider.run(channel(1).0).await.is_err());
     }
 
-    fn test_size_pattern_regex_matches(mut c: CmdConfig) {
+    async fn test_size_pattern_regex_matches(mut c: CmdConfig) {
         c.size_pattern = r#"load averages: ([\d\.]+)"#.to_string();
-        let mut provider = CmdProvider::new(c).unwrap();
-        provider.run(bounded(1).0).unwrap();
+        let mut provider = CmdProvider::new(c).await.unwrap();
+        provider.run(channel(1).0).await.unwrap();
 
         assert!(!provider.data_size().is_empty());
         let datasize = provider.data_size().parse::<f32>().unwrap();
     }
 
-    fn test_size_pattern_regex_does_not_matches(mut c: CmdConfig) {
+    async fn test_size_pattern_regex_does_not_matches(mut c: CmdConfig) {
         c.size_pattern = r#"load ave: ([\d\.]+)"#.to_string();
-        let mut provider = CmdProvider::new(c).unwrap();
-        provider.run(bounded(1).0).unwrap();
+        let mut provider = CmdProvider::new(c).await.unwrap();
+        provider.run(channel(1).0).await.unwrap();
 
         assert!(provider.data_size().is_empty());
     }
 
-    fn test_size_pattern_regex_meets_dev_null(mut c: CmdConfig) {
+    async fn test_size_pattern_regex_meets_dev_null(mut c: CmdConfig) {
         c.size_pattern = r#"load ave: ([\d\.]+)"#.to_string();
         c.log_file = "/dev/null".to_string();
-        let mut provider = CmdProvider::new(c).unwrap();
+        let mut provider = CmdProvider::new(c).await.unwrap();
         // FIXME: 源代码里判断run失败，但是run里在解析size_pattern时忽略了find_all_submatches_in_file返回的错误，所以不应该为失败
-        assert!(provider.run(bounded(1).0).is_ok());
+        assert!(provider.run(channel(1).0).await.is_ok());
         assert!(provider.data_size().is_empty());
     }
 
-    #[test]
-    fn test_two_stage_rsync_provider(){
+    #[tokio::test]
+    async fn test_two_stage_rsync_provider(){
         let tmp_dir = Builder::new()
             .prefix("rtsync")
             .tempdir().expect("failed to create tmp dir");
@@ -670,19 +643,19 @@ sleep 7
             ..TwoStageRsyncConfig::default()
         };
 
-        let mut provider = TwoStageRsyncProvider::new(c.clone()).unwrap();
+        let mut provider = TwoStageRsyncProvider::new(c.clone()).await.unwrap();
         assert_eq!(provider.r#type(), ProviderEnum::TwoStageRsync);
-        assert_eq!(provider.name(), c.name);
-        assert_eq!(provider.working_dir(), c.working_dir);
-        assert_eq!(provider.log_dir(), c.log_dir);
-        assert_eq!(provider.log_file(), c.log_file);
-        assert_eq!(provider.interval(), c.interval);
+        assert_eq!(provider.name().await, c.name);
+        assert_eq!(provider.working_dir().await, c.working_dir);
+        assert_eq!(provider.log_dir().await, c.log_dir);
+        assert_eq!(provider.log_file().await, c.log_file);
+        assert_eq!(provider.interval().await, c.interval);
 
-        // test_a_command(provider, script_file_path)
-        test_terminating(provider, script_file_path)
+        // test_a_command(provider, script_file_path).await
+        test_terminating(provider, script_file_path).await
     }
 
-    fn test_a_command(mut provider: TwoStageRsyncProvider, script_file_path: PathBuf) {
+    async fn test_a_command(mut provider: TwoStageRsyncProvider, script_file_path: PathBuf) {
         let script_content = r#"#!/bin/bash
 echo "syncing to $(pwd)"
 echo $@
@@ -699,9 +672,9 @@ exit 0
                 .permissions().set_mode(0o755);
         }
 
-        provider.run(bounded(2).0).unwrap();
+        provider.run(channel(2).0).await.unwrap();
 
-        let target_dir = resolve_symlink(PathBuf::from(provider.working_dir())).unwrap();
+        let target_dir = resolve_symlink(PathBuf::from(provider.working_dir().await)).unwrap();
 
         let s1 = "-aHvh --no-o --no-g --stats --filter risk .~tmp~/ --exclude .~tmp~/ --safe-links ";
         let s2 = "--include=*.diff/ --include=by-hash/ --exclude=*.diff/Index --exclude=Contents* --exclude=Packages* --exclude=Sources* --exclude=Release* --exclude=InRelease --exclude=i18n/* --exclude=dep11/* --exclude=installer-*/current --exclude=ls-lR* --timeout=30 -6 ";
@@ -714,18 +687,18 @@ exit 0
                                       format!("{s1}{s2}{s3}{} {} {}",
                                               provider.two_stage_rsync_config.exclude_file, 
                                               provider.two_stage_rsync_config.upstream_url, 
-                                              provider.working_dir()), 
+                                              provider.working_dir().await), 
                                       target_dir.display().to_string(), 
                                       format!("{s4}{s5}{s6}{} {} {}",
                                               provider.two_stage_rsync_config.exclude_file,
                                               provider.two_stage_rsync_config.upstream_url,
-                                              provider.working_dir()));
+                                              provider.working_dir().await));
         
-        let logged_content = fs::read_to_string(provider.log_file()).expect("failed to read logged file");
+        let logged_content = fs::read_to_string(provider.log_file().await).expect("failed to read logged file");
         assert_eq!(logged_content, expected_output);
     }
 
-    fn test_terminating(mut provider: TwoStageRsyncProvider, script_file_path: PathBuf) {
+    async fn test_terminating(mut provider: TwoStageRsyncProvider, script_file_path: PathBuf) {
         let script_content = r#"#!/bin/bash
 echo $@
 sleep 10
@@ -740,15 +713,15 @@ exit 0
                 .permissions().set_mode(0o755);
         }
 
-        let (start, receive) = bounded::<Empty>(1);
+        let (start, mut receive) = channel::<Empty>(1);
         let mut provider_clone = provider.clone();
-        thread::spawn(move ||{
-            provider_clone.run(start).unwrap();
+        tokio::spawn(async move {
+            assert!(provider_clone.run(start).await.is_err());
         });
-        receive.recv().unwrap();
-        assert_eq!(provider.is_running(), true);
-        thread::sleep(std::time::Duration::from_secs(1));
-        provider.terminate().unwrap();
+        receive.recv().await.unwrap();
+        assert_eq!(provider.is_running().await, true);
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        provider.terminate().await.unwrap();
 
         let (s1, s2, s3) = (
             "-aHvh --no-o --no-g --stats --filter risk .~tmp~/ --exclude .~tmp~/ --safe-links ",
@@ -757,14 +730,14 @@ exit 0
             );
         let expected_output = format!("{s1}{s2}{s3}{} {} {}", provider.two_stage_rsync_config.exclude_file, 
                                       provider.two_stage_rsync_config.upstream_url, 
-                                      provider.working_dir());
-        let logged_content = fs::read_to_string(provider.log_file()).expect("failed to read logged file");
+                                      provider.working_dir().await);
+        let logged_content = fs::read_to_string(provider.log_file().await).expect("failed to read logged file");
         assert!(logged_content.starts_with(&expected_output));
     }
     
     
-    #[test]
-    fn test_rsync_program_fails(){
+    #[tokio::test]
+    async fn test_rsync_program_fails(){
         let tmp_dir = Builder::new()
             .prefix("rtsync")
             .tempdir().expect("failed to create tmp dir");
@@ -782,11 +755,11 @@ exit 0
             ..TwoStageRsyncConfig::default()
         };
         
-        let mut provider = TwoStageRsyncProvider::new(c.clone()).unwrap();
+        let mut provider = TwoStageRsyncProvider::new(c.clone()).await.unwrap();
         
-        assert!(provider.run(bounded(2).0).is_err());
+        assert!(provider.run(channel(2).0).await.is_err());
         
-        let logged_content = fs::read_to_string(provider.log_file()).expect("failed to read logged file");
+        let logged_content = fs::read_to_string(provider.log_file().await).expect("failed to read logged file");
         assert!(logged_content.contains("Error in socket I/O"))
     }
 }

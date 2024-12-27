@@ -1,14 +1,13 @@
 use std::collections::HashMap;
-use std::error::Error;
+use anyhow::{anyhow, Result};
 use std::{fs, io, thread};
-use std::cell::RefCell;
-use std::ffi::OsStr;
 use std::fs::Permissions;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
-use std::process::Command;
-use crossbeam_channel::{Sender, Receiver, bounded};
-use std::sync::{mpsc, Arc, Mutex, RwLock};
+use tokio::process::Command;
+use tokio::sync::mpsc::Sender;
+use tokio::sync::{Mutex, RwLock};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use anymap::AnyMap;
 use chrono::Duration;
@@ -19,8 +18,6 @@ use nix::unistd::Pid;
 use internal;
 use internal::util::extract_size_from_rsync_log;
 use crate::base_provider::{BaseProvider};
-use crate::cgroup::CGroupHook;
-use crate::common;
 use crate::common::{Empty, DEFAULT_MAX_RETRY};
 use crate::config::ProviderEnum;
 use crate::context::Context;
@@ -28,7 +25,7 @@ use crate::docker::DockerHook;
 use crate::hooks::{HookType, JobHook};
 use crate::provider::{MirrorProvider, _LOG_DIR_KEY, _LOG_FILE_KEY, _WORKING_DIR_KEY};
 use crate::runner::{err_process_not_started, CmdJob};
-use crate::zfs_hook::ZfsHook;
+use async_trait::async_trait;
 
 #[derive(Clone, Default)]
 pub(crate) struct RsyncConfig{
@@ -71,11 +68,11 @@ unsafe impl Send for RsyncProvider{}
 unsafe impl Sync for RsyncProvider{}
 
 impl RsyncProvider {
-    pub(crate) fn new(mut c: RsyncConfig) -> Result<Self, Box<dyn Error>> {
+    pub(crate) async fn new(mut c: RsyncConfig) -> Result<Self> {
         // TODO: 检查config选项
-        if !c.upstream_url.ends_with("/"){
-            return Err("rsync上游URL应该以'/'结尾".into());
-        }
+        // if !c.upstream_url.ends_with("/"){
+        //     return Err(anyhow!("rsync上游URL应该以'/'结尾"));
+        // }
         if c.retry == 0{
             c.retry = DEFAULT_MAX_RETRY;
         }
@@ -130,7 +127,7 @@ impl RsyncProvider {
             options.extend(c.extra_options)
         }
         provider.options = Arc::from(options);
-        if let Some(ctx) = provider.base_provider.write().unwrap().context().lock().unwrap().as_mut(){
+        if let Some(ctx) = provider.base_provider.write().await.context().lock().await.as_mut(){
             let mut value = AnyMap::new();
             value.insert(c.working_dir);
             ctx.set(_WORKING_DIR_KEY.to_string(), value);
@@ -148,8 +145,8 @@ impl RsyncProvider {
     }
     
     /// cmd配置base_provider字段中的cmd字段
-    fn cmd(&self){
-        let working_dir = self.working_dir();
+    async fn cmd(&self){
+        let working_dir = self.working_dir().await;
         let mut command = Vec::new();
         command.push(self.rsync_config.rsync_cmd.clone());
         println!("debug：添加了rsync_cmd：{}", self.rsync_config.rsync_cmd.clone());
@@ -158,13 +155,13 @@ impl RsyncProvider {
         command.push(self.rsync_config.upstream_url.clone());
         println!("debug：添加了upstream_url：{:?}", self.rsync_config.upstream_url.clone());
         command.push(working_dir.clone());
-        println!("debug：添加了working_dir：{:?}", working_dir.clone());
+        println!("debug：添加了working_dir：{:?}", working_dir);
         let env = self.rsync_config.rsync_env.clone();
         println!("debug：rsync_env ：{:?}", &env);
         
         let cmd_job: CmdJob;
         let mut args: Vec<String> = Vec::new();
-        let mut base_provider_lock = self.base_provider.write().unwrap();
+        let mut base_provider_lock = self.base_provider.write().await;
         let use_docker = base_provider_lock.docker_ref().is_some();
 
         if let Some(d) = base_provider_lock.docker_ref().as_ref(){
@@ -204,14 +201,14 @@ impl RsyncProvider {
             args.extend(command.iter().cloned());
             
             cmd_job = CmdJob::new(Command::new(c), working_dir.clone(), env.clone());
-            { cmd_job.cmd.lock().unwrap().args(&args); }
+            { cmd_job.cmd.lock().await.args(&args); }
 
         }else {
             if command.len() == 1{
                 // 已证实：ubuntu22.04上如果直接使用脚本文件运行Command则会Text file busy，用bash来运行避免文件阻塞
                 // 正常运行时cmd: Command::new(&command[0])，把下面cmd_job.cmd.arg(&command[0]);删除
                 cmd_job = CmdJob::new(Command::new("bash"), working_dir.clone(), env.clone());
-                { cmd_job.cmd.lock().unwrap().arg(&command[0]); }
+                { cmd_job.cmd.lock().await.arg(&command[0]); }
                 
             }else if command.len() > 1 {
                 // 已证实：ubuntu22.04上如果直接使用脚本文件运行Command则会Text file busy，用bash来运行避免文件阻塞
@@ -222,7 +219,7 @@ impl RsyncProvider {
                 cmd_job = CmdJob::new(Command::new("bash"), working_dir.clone(), env.clone());
                 {
                     cmd_job.cmd
-                        .lock().unwrap()
+                        .lock().await
                         .arg(c)
                         .args(&args);
                 }
@@ -250,7 +247,7 @@ impl RsyncProvider {
             }
             {
                 cmd_job.cmd
-                    .lock().unwrap()
+                    .lock().await
                     .current_dir(&working_dir)
                     .envs(crate::runner::new_environ(env, true));
             }
@@ -263,9 +260,10 @@ impl RsyncProvider {
     
 }
 
+#[async_trait]
 impl MirrorProvider for RsyncProvider  {
-    fn name(&self) -> String {
-        self.base_provider.read().unwrap().name()
+    async fn name(&self) -> String {
+        self.base_provider.read().await.name()
     }
 
     fn upstream(&self) -> String {
@@ -277,73 +275,75 @@ impl MirrorProvider for RsyncProvider  {
     }
     
     // 运行rsync命令并等待结果，记录同步文件大小。如果rsync异常，则解析错误并将错误返回
-    fn run(&mut self, started: Sender<Empty>) -> Result<(), Box<dyn Error>> {
+    async fn run(&mut self, started: Sender<Empty>) -> Result<()> {
         self.data_size = Arc::from(String::new());
         
         println!("debug: 等待启动。。。");
         
-        MirrorProvider::start(self)?;
+        MirrorProvider::start(self).await?;
         
-        started.send(()).expect("发送失败");
+        started.send(()).await.expect("发送失败");
         
         println!("debug: 等待结束。。。");
 
         // 获取锁并执行 wait() 操作
-        let base_provider = self.base_provider.read().unwrap();
-        let result = base_provider.wait();
+        let base_provider = self.base_provider.read().await;
+        let result = base_provider.wait().await;
         
         // 处理等待的结果
         match result {
             Err(err) => {
-                return Err(err);
-            },
+                drop(base_provider);
+                return Err(anyhow!(err));
+            }
             Ok(exit_code) if exit_code != 0 => {
                 println!("捕获到非正常退出！{exit_code}");
-                
+        
                 return if let Some(msg) = internal::util::translate_rsync_error_code(exit_code) {
                     debug!("rsync 异常终止： {} ({})", exit_code, msg);
-
+        
                     // 释放锁后再处理 log_file_fd
                     drop(base_provider);
-                    if let Some(log_file_fd) = self.base_provider.write().unwrap().log_file_fd.as_mut() {
+                    if let Some(log_file_fd) = self.base_provider.write().await.log_file_fd.as_mut() {
                         log_file_fd.write(format!("{}\n", msg).as_bytes())?;
                     }
-                    Err(msg.into())
+                    Err(anyhow!(msg))
                 } else {
-                    Err("解析错误状态码失败".into())
-                }
+                    Err(anyhow!("解析错误状态码失败"))
+                };
             }
             _ => {
                 drop(base_provider);
             }
         }
-        if let Some(size) = extract_size_from_rsync_log(&*self.log_file()) {
+
+        if let Some(size) = extract_size_from_rsync_log(&*self.log_file().await) {
             self.data_size = size.into()
         };
         Ok(())
     }
 
     // 根据配置生成rsync命令，启动一个新进程来运行
-    fn start(&self) -> Result<(), Box<dyn Error>> {
-        if self.is_running(){
-            return Err("provider现在正在运行".into())
+    async fn start(&self) -> Result<()> {
+        if self.is_running().await{
+            return Err(anyhow!("provider现在正在运行"))
         }
         
-        self.cmd();
+        self.cmd().await;
         
-        let mut base_provider_lock = self.base_provider.write().unwrap();
+        let mut base_provider_lock = self.base_provider.write().await;
         
-        if let Err(e) = base_provider_lock.prepare_log_file(false){
+        if let Err(e) = base_provider_lock.prepare_log_file(false).await{
             error!("prepare_log_file 失败{}", e);
             return Err(e);
         }
         
-        if let Err(e) = base_provider_lock.start(){
+        if let Err(e) = base_provider_lock.start().await{
             error!("start失败: {}", e);
             return Err(e);
         }
         
-        base_provider_lock.is_running.store(true, Ordering::SeqCst);
+        base_provider_lock.is_running.store(true, Ordering::Release);
         
         debug!("将is_running字段设置为true :{}", base_provider_lock.name());
 
@@ -351,64 +351,69 @@ impl MirrorProvider for RsyncProvider  {
         Ok(())
     }
 
-    fn terminate(&self) -> Result<(), Box<dyn Error>> {
+    async fn terminate(&self) -> Result<()> {
         println!("debug: 进入terminate！");
-        self.base_provider.read().unwrap().terminate()
+        self.base_provider.read().await.terminate().await
+    }
+
+    async fn is_running(&self) -> bool {
+        self.base_provider.read().await.is_running()
     }
 
 
-    fn is_running(&self) -> bool {
-        self.base_provider.read().unwrap().is_running()
+    async fn docker(&self) -> Arc<Option<DockerHook>> {
+        self.base_provider.read().await.docker_ref()
     }
 
-    fn docker(&self) -> Arc<Option<DockerHook>> {
-        self.base_provider.read().unwrap().docker_ref()
+    async fn add_hook(&mut self, hook: HookType) {
+        self.base_provider.write().await.add_hook(hook).await;
     }
 
-    fn add_hook(&mut self, hook: HookType) {
-        self.base_provider.write().unwrap().add_hook(hook);
-    }
-
-    fn hooks(&self) -> Arc<Mutex<Vec<Box<dyn JobHook>>>> {
-        self.base_provider.read().unwrap()
+    async fn hooks(&self) -> Arc<Mutex<Vec<Box<dyn JobHook>>>> {
+        self.base_provider.read().await
             .hooks()
     }
 
-    fn interval(&self) -> Duration {
-        self.base_provider.read().unwrap().interval()
+    async fn interval(&self) -> Duration {
+        self.base_provider.read().await.interval()
     }
 
-    fn timeout(&self) -> Duration {
-        self.base_provider.read().unwrap().timeout()
+    async fn retry(&self) -> i64 {
+        self.base_provider.read().await.retry
     }
 
-    fn working_dir(&self) -> String {
-        self.base_provider.read().unwrap().working_dir()
+    async fn timeout(&self) -> Duration {
+        self.base_provider.read().await.timeout()
     }
 
-    fn log_dir(&self) -> String {
-        self.base_provider.read().unwrap().log_dir()
+    async fn working_dir(&self) -> String {
+        self.base_provider.read().await.working_dir().await
     }
 
-    fn log_file(&self) -> String {
-        self.base_provider.read().unwrap().log_file()
+    async fn log_dir(&self) -> String {
+        self.base_provider.read().await.log_dir().await
+    }
+
+    async fn log_file(&self) -> String {
+        self.base_provider.read().await.log_file().await
     }
 
     fn data_size(&self) -> String {
         self.data_size.to_string()
     }
 
-    fn enter_context(&mut self) -> Arc<Mutex<Option<Context>>> {
-        self.base_provider.write().unwrap()
-            .enter_context()
+    async fn enter_context(&mut self) -> Arc<Mutex<Option<Context>>> {
+        self.base_provider.write().await
+            .enter_context().await
     }
 
-    fn exit_context(&mut self) -> Arc<Mutex<Option<Context>>> {
-        self.base_provider.write().unwrap()
-            .exit_context()
+    async fn exit_context(&mut self) -> Arc<Mutex<Option<Context>>> {
+        self.base_provider.write().await
+            .exit_context().await
     }
-    fn context(&self) -> Arc<Mutex<Option<Context>>> {
-        self.base_provider.write().unwrap()
+
+    async fn context(&self) -> Arc<Mutex<Option<Context>>> {
+        self.base_provider.write().await
             .context()
     }
 }

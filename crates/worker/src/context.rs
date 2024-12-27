@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::error::Error;
+use anyhow::{anyhow, Result};
 use anymap::{self, Map};
 // Context对象的目的是存储运行时配置
 // Context 是一个分层的键值存储
@@ -10,6 +10,9 @@ pub struct Context {
     parent: Option<Box<Context>>,  // 上一个 Context
     store: HashMap<String, Map>, // 当前层的键值存储
 }
+
+unsafe impl Send for Context {}
+unsafe impl Sync for Context {}
 
 impl Context {
     // 创建一个新的 Context
@@ -29,10 +32,10 @@ impl Context {
     }
 
     // 退出当前 Context，返回上层的 Context
-    pub fn exit(self) -> Result<Self, Box<dyn Error>> {
+    pub fn exit(self) -> Result<Self> {
         match self.parent {
             Some(parent) => Ok(*parent),
-            None => Err("无法从底层context退出".into()),
+            None => Err(anyhow!("无法从底层context退出")),
         }
     }
 

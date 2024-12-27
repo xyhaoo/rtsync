@@ -2,23 +2,18 @@ use crate::common::Empty;
 use std::collections::HashMap;
 use std::fs::{File, Permissions};
 use std::{env, fs, io, process, thread};
-use std::error::Error;
-use std::ops::Deref;
-use std::os::unix::fs::PermissionsExt;
-use std::os::unix::raw::pid_t;
-use std::process::{Child, Command, Stdio};
-use crossbeam_channel::{Sender, Receiver};
-use std::sync::{Mutex, MutexGuard, RwLock};
-use std::time::Duration;
-use crate::provider::MirrorProvider;
-use libc::{getuid, getgid};
-use log::{debug, error, warn};
-use nix::sys::signal::{kill, Signal};
-use nix::unistd::Pid;
+use anyhow::{anyhow, Error, Result};
+use tokio::process::{Child, Command};
+use std::process::Stdio;
+use std::sync::Arc;
+use tokio::sync::mpsc::{Sender, Receiver};
+use tokio::sync::mpsc::error::TryRecvError;
+use tokio::sync::Mutex;
+
 // runner运行操作系统命令，提供命令行，env和log file
 // 它是python-sh或go-sh的替代品
-pub(crate) fn err_process_not_started() -> Box<dyn Error> {
-    "进程未启动".into()
+pub(crate) fn err_process_not_started() -> Error {
+    anyhow!("进程未启动")
 }
 
 // Mutex<CmdJob>
@@ -31,28 +26,28 @@ pub(crate) struct CmdJob
     pub(crate) working_dir: String,
     pub(crate) env: HashMap<String, String>,
     pub(crate) log_file: Option<File>,
-    pub(crate) finished: Option<Receiver<Empty>>,
+    pub(crate) finished_tx: Mutex<Option<Sender<()>>>,
+    pub(crate) finished_rx: Mutex<Option<Receiver<()>>>,
     pub(crate) ret_err: Mutex<String>,
 }
 
 impl CmdJob {
-
-    
     pub(crate) fn new(cmd: Command, working_dir: String, env: HashMap<String, String>) -> Self {
         CmdJob{
             cmd: Mutex::new(cmd),
             result: Mutex::new(None),
             pid: None,
-            working_dir: String::new(),
-            env: HashMap::new(),
+            working_dir,
+            env,
             log_file: None,
-            finished: None,
+            finished_tx: Mutex::new(None),
+            finished_rx: Mutex::new(None),
             ret_err: Mutex::from(String::new()),
         }
     }
     
-    pub(crate) fn set_log_file(&self, log_file: Option<File>){
-        let mut cmd_lock = self.cmd.lock().unwrap();
+    pub(crate) async fn set_log_file(&self, log_file: Option<File>){
+        let mut cmd_lock = self.cmd.lock().await;
         match log_file {
             Some(log_file) => {
                 cmd_lock.stdout(Stdio::from(log_file.try_clone().expect("复制文件句柄时失败")));
@@ -67,40 +62,50 @@ impl CmdJob {
         drop(cmd_lock);
     }
 
-    pub(crate) fn wait(&self) -> Result<i32, Box<dyn Error>>{
-        let mut ret_err_lock = self.ret_err.lock().unwrap();
-        if let Some(finished) = self.finished.as_ref() {
-            if finished.recv().is_ok(){
-                return match &ret_err_lock {
-                    err if ret_err_lock.is_empty() => Ok(0),
-                    err => Err(ret_err_lock.clone().into()),
+    pub(crate) async fn wait(&self) -> Result<i32>{
+        let mut ret_err_lock = self.ret_err.lock().await;
+        let mut finished_rx_lock = self.finished_rx.lock().await;
+        if let Err(e) = finished_rx_lock.as_mut().unwrap().try_recv(){
+            drop(finished_rx_lock);
+            match e{
+                // 发送端被drop之后，也就是命令已经停止
+                TryRecvError::Disconnected => {
+                    if !ret_err_lock.is_empty(){ return Err(anyhow!(ret_err_lock.clone())); }
+                },
+                // 命令正在运行。这个分支只能进入一次，分支内将drop发送端
+                TryRecvError::Empty => {
+                    if let Some(child) = self.result.lock().await.as_mut() {
+                        let result = child.wait().await;
+                        drop(self.finished_tx.lock().await.take().unwrap());
+                        match result {
+                            Err(err) => {
+                                *ret_err_lock = err.to_string();
+                                return Err(anyhow!(format!("命令异常终止: {}", err.to_string())))
+                            }
+                            // 命令正确，运行时是否出错都会进入这个分支，通过返回的状态码来判断是否正常退出
+                            Ok(exit_status) => {
+                                println!("{}", format!("退出状态: {}", exit_status.to_string()));
+                                match exit_status.code() {
+                                    // 正常退出
+                                    Some(0) => {},
+                                    // 被中断
+                                    None => {
+                                        *ret_err_lock = format!("退出状态: {}", exit_status.to_string());
+                                        return Err(anyhow!(format!("命令被信号中断: {}", exit_status.to_string())))
+                                    }
+                                    // 非正常退出
+                                    _ => {
+                                        *ret_err_lock = format!("退出状态: {}", exit_status.to_string());
+                                        return Ok(exit_status.code().expect("无法获取状态码"))
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
-                // return if let Some(err) = self.ret_err.as_ref() {
-                //     Err(err.clone().into())
-                // } else {
-                //     Ok(0)
-                // };
             }
         }
-        
-        if let Some(child) = self.result.lock().unwrap().as_mut() {
-            return match child.wait() {
-                Err(err) => {
-                    *ret_err_lock = err.to_string();
-                    Err(format!("命令异常终止: {}", err.to_string()).into())
-                }
-                Ok(exit_status) => {
-                    println!("debug: exit status: {}", exit_status);
-                    if exit_status.code() != Some(0) {
-                        *ret_err_lock = format!("退出状态: {}", exit_status.to_string())
-                    }
-                    // 命令正确，运行时是否出错都会进入这个分支，通过返回的状态码来判断是否正常退出
-                    println!("{}", format!("退出状态: {}", exit_status.to_string()));
-                    Ok(exit_status.code().expect("无法获取状态码"))
-                }
-            };
-        }
-
+        drop(ret_err_lock);
         Ok(0)
     }
 }

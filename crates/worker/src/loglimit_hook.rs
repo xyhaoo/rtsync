@@ -1,15 +1,17 @@
-use std::error::Error;
+use anyhow::{anyhow, Result};
 use std::{fs, io};
 use std::fs::Permissions;
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use chrono::Utc;
 use log::debug;
 use crate::context::Context;
 use crate::hooks::{EmptyHook, JobHook};
 use crate::provider::{MirrorProvider, _LOG_FILE_KEY};
 use anymap::AnyMap;
+use tokio::sync::Mutex;
+use async_trait::async_trait;
 
 #[derive(Debug, Clone)]
 pub(crate) struct LogLimiter{}
@@ -20,17 +22,16 @@ impl LogLimiter {
     }
 }
 
-
-
+#[async_trait]
 impl JobHook for LogLimiter{
 
-    fn pre_exec(&self,
-                provider_name: String,
-                log_dir: String, 
-                log_file: String, 
-                working_dir: String, 
-                context: Arc<Mutex<Option<Context>>>) 
-        -> Result<(), Box<dyn Error>> 
+    async fn pre_exec(&self,
+                      provider_name: String,
+                      log_dir: String,
+                      log_file: String,
+                      working_dir: String,
+                      context: Arc<Mutex<Option<Context>>>)
+                      -> Result<()> 
     {
         debug!("为 {} 执行日志限制器", provider_name);
         
@@ -89,7 +90,7 @@ impl JobHook for LogLimiter{
         symlink(&log_file_name, &log_link)?;
 
         
-        let mut cur_ctx = context.lock().unwrap();
+        let mut cur_ctx = context.lock().await;
         
         *cur_ctx = match cur_ctx.take(){
             Some(ctx) => Some(ctx.enter()),
@@ -104,14 +105,14 @@ impl JobHook for LogLimiter{
         Ok(())
     }
 
-    fn post_success(&self, 
-                    context: Arc<Mutex<Option<Context>>>, 
-                    _provider_name: String, 
-                    _working_dir: String, 
-                    _upstream: String, 
-                    _log_dir: String, 
-                    _log_file: String) -> Result<(), Box<dyn Error>> {
-        let mut cur_ctx = context.lock().unwrap();
+    async fn post_success(&self,
+                          context: Arc<Mutex<Option<Context>>>,
+                          _provider_name: String,
+                          _working_dir: String,
+                          _upstream: String,
+                          _log_dir: String,
+                          _log_file: String) -> Result<()> {
+        let mut cur_ctx = context.lock().await;
         *cur_ctx = match cur_ctx.take(){
             Some(ctx) => {
                 match ctx.exit() {
@@ -125,14 +126,14 @@ impl JobHook for LogLimiter{
     }
     
     
-    fn post_fail(&self,
-                 _provider_name: String,
-                 _working_dir: String,
-                 _upstream: String,
-                 log_dir: String,
-                 log_file: String,
-                 context: Arc<Mutex<Option<Context>>>)
-        -> Result<(), Box<dyn Error>> 
+    async fn post_fail(&self,
+                       _provider_name: String,
+                       _working_dir: String,
+                       _upstream: String,
+                       log_dir: String,
+                       log_file: String,
+                       context: Arc<Mutex<Option<Context>>>)
+                       -> Result<()> 
     {
         
         let log_file_fail = format!("{log_file}.fail");
@@ -145,7 +146,7 @@ impl JobHook for LogLimiter{
             .to_string_lossy().to_string();
         symlink(&log_file_name, log_link)?;
 
-        let mut cur_ctx = context.lock().unwrap();
+        let mut cur_ctx = context.lock().await;
         *cur_ctx = match cur_ctx.take(){
             Some(ctx) => {
                 match ctx.exit() {

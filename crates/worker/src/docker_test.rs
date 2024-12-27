@@ -8,8 +8,8 @@ mod tests {
     use std::process::Command;
     use std::sync::{Arc, RwLock};
     use chrono::Duration;
-    use crossbeam_channel::bounded;
     use tempfile::Builder;
+    use tokio::sync::mpsc::channel;
     use crate::cmd_provider::{CmdConfig, CmdProvider};
     use crate::common::Empty;
     use crate::config::MemBytes;
@@ -49,8 +49,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_docker() {
+    #[tokio::test]
+    async fn test_docker() {
         let tmp_dir = Builder::new()
             .prefix("rtsync")
             .tempdir().expect("failed to create tmp dir");
@@ -78,7 +78,7 @@ mod tests {
         let cmd_script_content = r#"
 #!/bin/sh
 echo ${TEST_CONTENT}
-sleep 20
+sleep 30
 "#;
 
         {
@@ -86,11 +86,11 @@ sleep 20
                 .expect("failed to create tmp file");
             script_file.write_all(cmd_script_content.as_bytes()).expect("failed to write to tmp file");
             fs::metadata(&cmd_script_path).expect("failed to get metadata")
-                .permissions().set_mode(0o777);
+                .permissions().set_mode(0o755);
         }
 
 
-        let mut provider = CmdProvider::new(c.clone()).unwrap();
+        let mut provider = CmdProvider::new(c.clone()).await.unwrap();
 
         let d = DockerHook{
             image: "alpine:3.8".to_string(),
@@ -99,60 +99,60 @@ sleep 20
             ..DockerHook::default()
         };
         let d = HookType::Docker(d);
-        provider.add_hook(d);
-        assert!(provider.docker().is_some());
+        provider.add_hook(d).await;
+        assert!(provider.docker().await.is_some());
 
         // 😥
-        provider.docker().as_ref().clone().unwrap()
-            .pre_exec(provider.name(),
-                      provider.log_dir(),
-                      provider.log_file(),
-                      provider.working_dir(),
-                      provider.context())
+        provider.docker().await.as_ref().clone().unwrap()
+            .pre_exec(provider.name().await,
+                      provider.log_dir().await,
+                      provider.log_file().await,
+                      provider.working_dir().await,
+                      provider.context().await).await
             .unwrap();
 
         cmd_run("docker".to_string(), vec!["images"]);
-        let (exit_err_tx, exit_err_rx) = bounded::<String>(1);
+        let (exit_err_tx, mut exit_err_rx) = channel::<String>(1);
 
         let provider_clone = provider.clone();
-        let handler = std::thread::spawn(move || {
+        let handler = tokio::spawn(async move {
             let mut provider = provider_clone;
-            if let Err(e) = provider.run(bounded::<Empty>(1).0) {
+            if let Err(e) = provider.run(channel(1).0).await {
                 println!("provider.run() 错误: {e}");
-                exit_err_tx.send(e.to_string()).unwrap();
+                exit_err_tx.send(e.to_string()).await.unwrap();
             }else {
-                exit_err_tx.send("".to_string()).unwrap();
+                exit_err_tx.send("".to_string()).await.unwrap();
             }
-            println!("provider.run() 退出了");
+            println!("provider.run() 退出了"); 
         });
 
         // Wait for docker running
         for _ in 0..8{
             // 😅
-            let names = get_docker_by_name(provider.docker().as_ref().clone().unwrap().name(provider.name())).unwrap();
-            if names.len() == 0 {
+            let names = get_docker_by_name(provider.docker().await.as_ref().clone().unwrap().name(provider.name().await)).unwrap();
+            if !names.len() == 0 {
                 break;
             }
-            std::thread::sleep(std::time::Duration::from_secs(1));
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
 
         // assert container running
-        let names = get_docker_by_name(provider.docker().as_ref().clone().unwrap().name(provider.name())).unwrap();
-        assert_eq!(names, format!("{}\n", provider.docker().as_ref().clone().unwrap().name(provider.name())));
+        let names = get_docker_by_name(provider.docker().await.as_ref().clone().unwrap().name(provider.name().await)).unwrap();
+        assert_eq!(names, format!("{}\n", provider.docker().await.as_ref().clone().unwrap().name(provider.name().await)));
 
-        provider.terminate().unwrap();
-        exit_err_rx.recv().unwrap();
+        provider.terminate().await.unwrap();
+        exit_err_rx.recv().await.unwrap();
 
-        let names = get_docker_by_name(provider.docker().as_ref().clone().unwrap().name(provider.name())).unwrap();
+        let names = get_docker_by_name(provider.docker().await.as_ref().clone().unwrap().name(provider.name().await)).unwrap();
         assert!(names.eq(""));
 
         // check log content
-        let logged_content = fs::read_to_string(provider.log_file()).unwrap();
+        let logged_content = fs::read_to_string(provider.log_file().await).unwrap();
         assert_eq!(logged_content, format!("{}\n", expect_output));
 
-        provider.docker().as_ref().clone().unwrap()
-            .post_exec(provider.context(),
-                       provider.name())
+        provider.docker().await.as_ref().clone().unwrap()
+            .post_exec(provider.context().await,
+                       provider.name().await).await
             .unwrap();
     }
 

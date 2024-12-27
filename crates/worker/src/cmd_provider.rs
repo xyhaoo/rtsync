@@ -1,23 +1,20 @@
 use std::collections::HashMap;
-use std::error::Error;
-use std::{fs, io, thread};
-use std::cell::RefCell;
+use anyhow::{anyhow, Result};
+use std::{fs, io};
 use std::ffi::{OsStr, OsString};
 use std::fs::Permissions;
 use std::os::unix::fs::PermissionsExt;
-use std::process::Command;
-use crossbeam_channel::bounded;
-use crossbeam_channel::Sender;
-use std::sync::{mpsc, Arc, Mutex, RwLock};
+use tokio::process::Command;
+use tokio::sync::mpsc::Sender;
+use tokio::sync::{Mutex, RwLock};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use anymap::AnyMap;
 use chrono::{DateTime, Duration, Utc};
 use libc::{getgid, getuid};
 use log::{debug, error, info, warn};
 use nix::sys::signal::{kill, Signal};
-use nix::unistd::Pid;
 use regex::Regex;
-use scopeguard::defer;
 use shlex::Shlex;
 use crate::base_provider::{BaseProvider};
 use crate::common::{Empty, DEFAULT_MAX_RETRY};
@@ -28,7 +25,7 @@ use internal::util::{find_all_submatches_in_file, extract_size_from_log};
 use crate::docker::DockerHook;
 use crate::hooks::{HookType, JobHook};
 use crate::runner::{err_process_not_started, CmdJob};
-use crate::zfs_hook::ZfsHook;
+use async_trait::async_trait;
 
 #[derive(Clone, Default)]
 pub(crate) struct CmdConfig{
@@ -63,7 +60,7 @@ unsafe impl Sync for CmdProvider {}
 
 //
 impl CmdProvider{
-    pub(crate) fn new(mut c: CmdConfig) -> Result<Self, Box<dyn Error>>{
+    pub(crate) async fn new(mut c: CmdConfig) -> Result<Self>{
         // TODO: 检查config选项
         if c.retry == 0{
             c.retry = DEFAULT_MAX_RETRY;
@@ -73,8 +70,8 @@ impl CmdProvider{
             cmd_config: Arc::from(c.clone()),
             ..CmdProvider::default()
         };
-        let base_provider_lock = provider.base_provider.write().unwrap();
-        if let Some(ctx) = base_provider_lock.ctx.lock().unwrap().as_mut(){
+        let base_provider_lock = provider.base_provider.write().await;
+        if let Some(ctx) = base_provider_lock.ctx.lock().await.as_mut(){
             let mut value = AnyMap::new();
             value.insert(c.working_dir);
             ctx.set(_WORKING_DIR_KEY.to_string(), value);
@@ -100,7 +97,7 @@ impl CmdProvider{
         if c.fail_on_match.len() > 0{
             match Regex::new(&*c.fail_on_match) {
                 Err(e) => {
-                    return Err(format!("匹配正则表达式fail_on_match失败：{}", e).into())
+                    return Err(anyhow!(format!("匹配正则表达式fail_on_match失败：{}", e)))
                 }
                 Ok(fail_on_match) => {
                     println!("debug：初始化regex成功：{:?}", fail_on_match);
@@ -111,7 +108,7 @@ impl CmdProvider{
         if c.size_pattern.len() > 0{
             match Regex::new(&*c.size_pattern) {
                 Err(e) => {
-                    return Err(format!("匹配正则表达式size_pattern失败：{}", e).into())
+                    return Err(anyhow!(format!("匹配正则表达式size_pattern失败：{}", e)))
                 }
                 Ok(size_pattern) => {
                     println!("debug: size_pattern regex初始化成功{:?}", size_pattern);
@@ -123,15 +120,15 @@ impl CmdProvider{
     }
     
     /// cmd配置base_provider字段中的cmd字段
-    fn cmd(&self){
-        let working_dir = self.working_dir();
-        let mut base_provider_lock = self.base_provider.write().unwrap();
+    async fn cmd(&self){
+        let working_dir = self.working_dir().await;
+        let mut base_provider_lock = self.base_provider.write().await;
         let mut env: HashMap<String, String> = [
             ("RTSYNC_MIRROR_NAME".to_string(), base_provider_lock.name().to_string()),
-            ("RTSYNC_WORKING_DIR".to_string(), base_provider_lock.working_dir()),
+            ("RTSYNC_WORKING_DIR".to_string(), base_provider_lock.working_dir().await),
             ("RTSYNC_UPSTREAM_URL".to_string(), self.cmd_config.upstream_url.clone()),
-            ("RTSYNC_LOG_DIR".to_string(), base_provider_lock.log_dir()),
-            ("RTSYNC_LOG_FILE".to_string(), base_provider_lock.log_file())
+            ("RTSYNC_LOG_DIR".to_string(), base_provider_lock.log_dir().await),
+            ("RTSYNC_LOG_FILE".to_string(), base_provider_lock.log_file().await)
         ].into();
 
         for (k, v) in self.cmd_config.env.iter(){
@@ -176,7 +173,7 @@ impl CmdProvider{
             args.extend(self.command.iter().cloned());
 
             cmd_job = CmdJob::new(Command::new(c), working_dir.clone(), env.clone());
-            { cmd_job.cmd.lock().unwrap().args(&args); }
+            { cmd_job.cmd.lock().await.args(&args); }
             
         }else {
             if self.command.len() == 1{
@@ -187,7 +184,7 @@ impl CmdProvider{
                 let args = self.command[1..].to_vec();
 
                 cmd_job = CmdJob::new(Command::new(c), working_dir.clone(), env.clone());
-                { cmd_job.cmd.lock().unwrap().args(&args); }
+                { cmd_job.cmd.lock().await.args(&args); }
             }else {
                 panic!("命令的长度最少是1！")
             }
@@ -210,7 +207,7 @@ impl CmdProvider{
             }
             {
                 cmd_job.cmd
-                    .lock().unwrap()
+                    .lock().await
                     .current_dir(&working_dir)
                     .envs(crate::runner::new_environ(env, true));
             }
@@ -224,10 +221,10 @@ impl CmdProvider{
     
 }
 
-
+#[async_trait]
 impl MirrorProvider for CmdProvider{
-    fn name(&self) -> String {
-        self.base_provider.read().unwrap().name()
+    async fn name(&self) -> String {
+        self.base_provider.read().await.name()
     }
 
     fn upstream(&self) -> String {
@@ -238,37 +235,44 @@ impl MirrorProvider for CmdProvider{
         ProviderEnum::Command
     }
 
-    fn run(&mut self, started: Sender<Empty>) -> Result<(), Box<dyn Error>> {
+    async fn run(&mut self, started: Sender<Empty>) -> Result<()> {
         self.data_size = Arc::from(String::new());
 
         println!("debug: 等待启动。。。");
 
-        MirrorProvider::start(self)?;
+        MirrorProvider::start(self).await?;
         
-        started.send(()).expect("发送失败");
+        started.send(()).await.expect("发送失败");
+        // let mut count = 0;
+        // loop {
+        //     if count > 100{
+        //         break
+        //     }
+        //     println!("wait loop");
+        //     count += 1;
+        // }
+        let base_provider_lock = self.base_provider.read().await;
 
-        println!("debug: 等待结束。。。");
-
-        match self.base_provider.read().unwrap().wait() {
+        match base_provider_lock.wait().await {
             Err(err) => {
                 return Err(err);
             }
             Ok(exit_code) if exit_code != 0 => {
                 println!("捕获到非正常退出！状态码：{exit_code}");
-                return Err(format!("错误状态码： {}", exit_code).into());
+                return Err(anyhow!(format!("错误状态码： {}", exit_code)));
             }
             // 正常退出
             _ => {}
         }
         
         if let Some(fail_on_match) = self.fail_on_match.as_ref(){
-            match find_all_submatches_in_file(&*self.log_file(), fail_on_match){
+            match find_all_submatches_in_file(&*self.log_file().await, fail_on_match){
                 Ok(sub_matches) => {
                     println!("debug: 找到的匹配项：{:?}", sub_matches);
                     info!("在文件中找到所有的子匹配项：{:?}", sub_matches);
                     if sub_matches.len() != 0{
                         debug!("匹配失败{:?}", sub_matches);
-                        return Err(format!("匹配正则表达式失败，找到 {} 个匹配项", sub_matches.len()).into());
+                        return Err(anyhow!(format!("匹配正则表达式失败，找到 {} 个匹配项", sub_matches.len())));
                     }
                 }
                 Err(e) => {
@@ -277,7 +281,7 @@ impl MirrorProvider for CmdProvider{
             }
         }
         if let Some(size_pattern) = self.size_pattern.as_ref(){
-            self.data_size = extract_size_from_log(&*self.log_file(), size_pattern)
+            self.data_size = extract_size_from_log(&*self.log_file().await, size_pattern)
                 .unwrap_or_default()
                 .into();
             println!("debug: 找到的匹配项：{:?}", self.data_size);
@@ -285,85 +289,90 @@ impl MirrorProvider for CmdProvider{
         Ok(())
     }
 
-    fn start(&self) -> Result<(), Box<dyn Error>> {
-        if self.is_running(){
-            return Err("provider现在正在运行".into())
+    async fn start(&self) -> Result<()> {
+        if self.is_running().await{
+            return Err(anyhow!("provider现在正在运行"))
         }
-        self.cmd();
-        let mut base_provider_lock = self.base_provider.write().unwrap();
-
-        base_provider_lock.prepare_log_file(false)?;
-        base_provider_lock.start()?;
-        base_provider_lock.is_running.store(true, Ordering::SeqCst);
+        
+        self.cmd().await;
+        let mut base_provider_lock = self.base_provider.write().await;
+        base_provider_lock.prepare_log_file(false).await?;
+        base_provider_lock.start().await?;
+        base_provider_lock.is_running.store(true, Ordering::Release);
         
         println!("debug: 将is_running字段设置为true :{}", base_provider_lock.name());
         debug!("将is_running字段设置为true :{}", base_provider_lock.name());
-
+        
         drop(base_provider_lock);
         Ok(())
     }
 
-    fn terminate(&self) -> Result<(), Box<dyn Error>> {
+    async fn terminate(&self) -> Result<()> {
         println!("debug: 进入terminate！");
-        self.base_provider.read().unwrap().terminate()
+        self.base_provider.read().await.terminate().await
     }
 
-    fn is_running(&self) -> bool {
-        self.base_provider.read().unwrap().is_running()
+    async fn is_running(&self) -> bool {
+        println!("debug: 读取is_running ");
+        self.base_provider.read().await.is_running()
     }
     // fn zfs(&self) -> Option<&ZfsHook> {
     //     self.base_provider.zfs.as_ref()
     // }
     //
-    fn docker(&self) -> Arc<Option<DockerHook>> {
-        self.base_provider.read().unwrap().docker_ref()
+    async fn docker(&self) -> Arc<Option<DockerHook>> {
+        self.base_provider.read().await.docker_ref()
     }
 
-    fn add_hook(&mut self, hook: HookType) {
-        self.base_provider.write().unwrap().add_hook(hook);
+    async fn add_hook(&mut self, hook: HookType) {
+        self.base_provider.write().await.add_hook(hook).await;
     }
 
-    fn hooks(&self) -> Arc<Mutex<Vec<Box<dyn JobHook>>>> {
-        self.base_provider.read().unwrap()
+    async fn hooks(&self) -> Arc<Mutex<Vec<Box<dyn JobHook>>>> {
+        self.base_provider.read().await
             .hooks()
     }
 
-    fn interval(&self) -> Duration {
-        self.base_provider.read().unwrap().interval()
+    async fn interval(&self) -> Duration {
+        self.base_provider.read().await.interval()
     }
 
-    fn timeout(&self) -> Duration {
-        self.base_provider.read().unwrap().timeout()
+    async fn retry(&self) -> i64 {
+        self.base_provider.read().await.retry
     }
 
-    fn working_dir(&self) -> String {
-        self.base_provider.read().unwrap().working_dir()
+    async fn timeout(&self) -> Duration {
+        self.base_provider.read().await.timeout()
     }
 
-    fn log_dir(&self) -> String {
-        self.base_provider.read().unwrap().log_dir()
+    async fn working_dir(&self) -> String {
+        self.base_provider.read().await.working_dir().await
     }
 
-    fn log_file(&self) -> String {
-        self.base_provider.read().unwrap().log_file()
+    async fn log_dir(&self) -> String {
+        self.base_provider.read().await.log_dir().await
+    }
+
+    async fn log_file(&self) -> String {
+        self.base_provider.read().await.log_file().await
     }
 
     fn data_size(&self) -> String {
         self.data_size.to_string()
     }
 
-    fn enter_context(&mut self) -> Arc<Mutex<Option<Context>>> {
-        self.base_provider.write().unwrap()
-            .enter_context()
+    async fn enter_context(&mut self) -> Arc<Mutex<Option<Context>>> {
+        self.base_provider.write().await
+            .enter_context().await
     }
 
-    fn exit_context(&mut self) -> Arc<Mutex<Option<Context>>> {
-        self.base_provider.write().unwrap()
-            .exit_context()
+    async fn exit_context(&mut self) -> Arc<Mutex<Option<Context>>> {
+        self.base_provider.write().await
+            .exit_context().await
     }
 
-    fn context(&self) -> Arc<Mutex<Option<Context>>> {
-        self.base_provider.write().unwrap()
+    async fn context(&self) -> Arc<Mutex<Option<Context>>> {
+        self.base_provider.write().await
             .context()
     }
 }

@@ -1,24 +1,22 @@
-use std::cell::RefCell;
-use std::error::Error;
+use anyhow::{Result};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use crate::config::{ProviderEnum, MirrorConfig, Config};
 use crate::common;
 use crate::cgroup::CGroupHook;
 use crate::hooks::{HookType, JobHook};
 use crate::context::Context;
-// use std::sync::mpsc;
-use crossbeam_channel::{Sender, Receiver};
+use tokio::sync::mpsc::Sender;
+use tokio::sync::Mutex;
 use chrono::{DateTime, Duration, Utc};
-use regex::Regex;
 use log::{error, warn};
 use tera::Tera;
-use tokio::time::timeout;
 use crate::cmd_provider::{CmdConfig, CmdProvider};
 use crate::docker::DockerHook;
 use crate::rsync_provider::{RsyncConfig, RsyncProvider};
 use crate::two_stage_rsync_provider::{TwoStageRsyncConfig, TwoStageRsyncProvider};
 use crate::zfs_hook::ZfsHook;
+use async_trait::async_trait;
 
 #[cfg(not(target_os = "linux"))]
 use crate::btrfs_snapshot_hook_nolinux;
@@ -35,52 +33,54 @@ pub(crate) const _LOG_FILE_KEY: &str = "log_file";
 
 
 // MirrorProvider trait
-pub trait MirrorProvider {
+#[async_trait]
+pub trait MirrorProvider: Send + Sync {
     // name
-    fn name(&self) -> String;
+    async fn name(&self) -> String;
     fn upstream(&self) -> String;
     fn r#type(&self) -> ProviderEnum;
 
-    // 开始后等待
-    fn run(&mut self, started: Sender<common::Empty>) -> Result<(), Box<dyn Error>>;
+    // 一个Command从开始到结束的整个过程
+    async fn run(&mut self, started: Sender<common::Empty>) -> Result<()>;
     // job开始
-    fn start(&self) -> Result<(), Box<dyn Error>> {Ok(())}
+    async fn start(&self) -> Result<()> {Ok(())}
     // 等待job结束
-    fn wait(&self) -> Result<(), Box<dyn Error>> {Ok(())}
+    fn wait(&self) -> Result<()> {Ok(())}
     // 终止mirror job
-    fn terminate(&self) -> Result<(), Box<dyn Error>>;
+    async fn terminate(&self) -> Result<()>;
     // job hooks
-    fn is_running(&self) -> bool;
+    async fn is_running(&self) -> bool;
     // Cgroup
     fn c_group(&self) -> Arc<Option<CGroupHook>> {Arc::new(None)}
     // ZFS
     fn zfs(&self) -> Arc<Option<ZfsHook>> {Arc::new(None)}
     // docker
-    fn docker(&self) -> Arc<Option<DockerHook>>;
+    async fn docker(&self) -> Arc<Option<DockerHook>>;
 
-    fn add_hook(&mut self, hook: HookType);
-    fn hooks(&self) -> Arc<Mutex<Vec<Box<dyn JobHook>>>>;
+    async fn add_hook(&mut self, hook: HookType);
+    async fn hooks(&self) -> Arc<Mutex<Vec<Box<dyn JobHook>>>>;
 
-    fn interval(&self)-> Duration;
-    fn retry(&self) -> u64 {0}
-    fn timeout(&self) -> Duration;
+    async fn interval(&self)-> Duration;
+    async fn retry(&self) -> i64;
+    async fn timeout(&self) -> Duration;
 
-    fn working_dir(&self) -> String;
-    fn log_dir(&self) -> String;
-    fn log_file(&self) -> String;
+    async fn working_dir(&self) -> String;
+    async fn log_dir(&self) -> String;
+    async fn log_file(&self) -> String;
+    
     fn is_master(&self) -> bool {false}
     fn data_size(&self) -> String;
 
     // enter context
-    fn enter_context(&mut self) -> Arc<Mutex<Option<Context>>>;
+    async fn enter_context(&mut self) -> Arc<Mutex<Option<Context>>>;
     // exit context
-    fn exit_context(&mut self) -> Arc<Mutex<Option<Context>>>;
+    async fn exit_context(&mut self) -> Arc<Mutex<Option<Context>>>;
     // return context
-    fn context(&self) -> Arc<Mutex<Option<Context>>>;
+    async fn context(&self) -> Arc<Mutex<Option<Context>>>;
 }
 
 // new_mirror_provider使用一个MirrorConfig和全局的Config创建一个MirrorProvider实例
-pub(crate) fn new_mirror_provider(mut mirror: MirrorConfig, cfg: Config) -> Box<dyn MirrorProvider>
+pub(crate) async fn new_mirror_provider(mut mirror: MirrorConfig, cfg: Config) -> Box<dyn MirrorProvider>
 {
     // 使用MirrorConfig中的name字段填充log_dir中的占位符(如果有）
     let format_log_dir = |log_dir: String, m: &MirrorConfig|-> String{
@@ -147,9 +147,9 @@ pub(crate) fn new_mirror_provider(mut mirror: MirrorConfig, cfg: Config) -> Box<
                 timeout: Duration::seconds(mirror.timeout.unwrap_or_default()),
                 env: mirror.env.clone().unwrap_or_default(),
             };
-            match CmdProvider::new(pc) {
+            match CmdProvider::new(pc).await {
                 Ok(p) => {
-                    p.base_provider.write().unwrap().is_master = is_master;
+                    p.base_provider.write().await.is_master = is_master;
                     provider = Box::new(p);
                 },
                 Err(e) => {
@@ -179,9 +179,9 @@ pub(crate) fn new_mirror_provider(mut mirror: MirrorConfig, cfg: Config) -> Box<
                 retry: mirror.retry.unwrap_or_default(),
                 timeout: Duration::seconds(mirror.timeout.unwrap_or_default()),
             };
-            match RsyncProvider::new(rc) {
+            match RsyncProvider::new(rc).await {
                 Ok(mut p) => {
-                    p.base_provider.write().unwrap().is_master = is_master;
+                    p.base_provider.write().await.is_master = is_master;
                     provider = Box::new(p);
                 },
                 Err(e) => {
@@ -211,9 +211,9 @@ pub(crate) fn new_mirror_provider(mut mirror: MirrorConfig, cfg: Config) -> Box<
                 retry: mirror.retry.unwrap_or_default(),
                 timeout: Duration::seconds(mirror.timeout.unwrap_or_default()),
             };
-            match TwoStageRsyncProvider::new(rc) {
+            match TwoStageRsyncProvider::new(rc).await {
                 Ok(mut p) => {
-                    p.base_provider.write().unwrap().is_master = is_master;
+                    p.base_provider.write().await.is_master = is_master;
                     provider = Box::new(p);
                 },
                 Err(e) => {
@@ -226,12 +226,12 @@ pub(crate) fn new_mirror_provider(mut mirror: MirrorConfig, cfg: Config) -> Box<
     }
 
     // add logging hook
-    provider.add_hook(HookType::LogLimiter(LogLimiter::new()));
+    provider.add_hook(HookType::LogLimiter(LogLimiter::new())).await;
 
     // add zfs hook
     if let Some(true) = cfg.zfs.enable{
         if let Some(z_pool) = cfg.zfs.z_pool{
-            provider.add_hook(HookType::Zfs(ZfsHook::new(z_pool)));
+            provider.add_hook(HookType::Zfs(ZfsHook::new(z_pool))).await;
         }
     }
 
@@ -239,16 +239,16 @@ pub(crate) fn new_mirror_provider(mut mirror: MirrorConfig, cfg: Config) -> Box<
     if let Some(true) = cfg.btrfs_snapshot.enable{
         if let Some(snapshot_path) = cfg.btrfs_snapshot.snapshot_path{
             #[cfg(not(target_os = "linux"))]
-            provider.add_hook(HookType::BtrfsNoLinux(btrfs_snapshot_hook_nolinux::BtrfsSnapshotHook::new(&*snapshot_path, mirror.clone())));
+            provider.add_hook(HookType::BtrfsNoLinux(btrfs_snapshot_hook_nolinux::BtrfsSnapshotHook::new(&*snapshot_path, mirror.clone()))).await;
             #[cfg(target_os = "linux")]
-            provider.add_hook(HookType::Btrfs(btrfs_snapshot_hook::BtrfsSnapshotHook::new(&*provider.name(), &*snapshot_path, mirror.clone())));
+            provider.add_hook(HookType::Btrfs(btrfs_snapshot_hook::BtrfsSnapshotHook::new(&*provider.name().await, &*snapshot_path, mirror.clone()))).await;
         }
     }
 
     // add docker hook
     if let Some(true) = cfg.docker.enable{
         if mirror.docker_image.is_some(){
-            provider.add_hook(HookType::Docker(DockerHook::new(cfg.docker.clone(), mirror.clone())));
+            provider.add_hook(HookType::Docker(DockerHook::new(cfg.docker.clone(), mirror.clone()))).await;
         }
     }
     // else if cfg.c_group.enable.unwrap() {
@@ -256,10 +256,10 @@ pub(crate) fn new_mirror_provider(mut mirror: MirrorConfig, cfg: Config) -> Box<
     //     provider.add_hook(HookType::Cgroup(CGroupHook::new()))
     // }
 
-    let mut add_hook_from_cmd_list = |cmd_list: Vec<String>, exec_on: u8| {
+    async fn add_hook_from_cmd_list(provider: &mut Box<dyn MirrorProvider>, mirror: &MirrorConfig, cmd_list: Vec<String>, exec_on: u8) {
         for cmd in cmd_list {
             match ExecPostHook::new(ExecOn::from_u8(exec_on), &*cmd) {
-                Ok(hook) => provider.add_hook(HookType::ExecPost(hook)),
+                Ok(hook) => provider.add_hook(HookType::ExecPost(hook)).await,
                 Err(e) => {
                     let err = format!("初始化mirror {} 失败：{}", mirror.name.clone().unwrap(), e);
                     error!("{}", err);
@@ -267,34 +267,38 @@ pub(crate) fn new_mirror_provider(mut mirror: MirrorConfig, cfg: Config) -> Box<
                 }
             }
         }
-    };
+    }
 
     // ExecOnSuccess hook
     match mirror.exec_on_success.as_ref() {
         Some(exec_on_success) if !exec_on_success.is_empty() => {
-            add_hook_from_cmd_list(exec_on_success.clone(), ExecOn::Success.as_u8());
+            add_hook_from_cmd_list(&mut provider, &mirror, exec_on_success.clone(), ExecOn::Success.as_u8()).await;
         }
         _ => {
-            add_hook_from_cmd_list(cfg.global.exec_on_success.clone().unwrap_or_default(), 
-                                   ExecOn::Success.as_u8());
+            add_hook_from_cmd_list(&mut provider, &mirror, 
+                                   cfg.global.exec_on_success.clone().unwrap_or_default(),
+                                   ExecOn::Success.as_u8()).await;
         }
     }
-    add_hook_from_cmd_list(mirror.exec_on_success_extra.clone().unwrap_or_default(),
-                           ExecOn::Success.as_u8());
+    add_hook_from_cmd_list(&mut provider, &mirror, 
+                           mirror.exec_on_success_extra.clone().unwrap_or_default(),
+                           ExecOn::Success.as_u8()).await;
 
     // ExecOnFailure hook
     match mirror.exec_on_failure.as_ref() {
         Some(exec_on_failure) if !exec_on_failure.is_empty() => {
-            add_hook_from_cmd_list(exec_on_failure.clone(), ExecOn::Failure.as_u8());
+            add_hook_from_cmd_list(&mut provider, &mirror, 
+                                   exec_on_failure.clone(), ExecOn::Failure.as_u8()).await;
         }
         _ => {
-            add_hook_from_cmd_list(cfg.global.exec_on_failure.clone().unwrap_or_default(),
-                                   ExecOn::Failure.as_u8());
+            add_hook_from_cmd_list(&mut provider, &mirror, 
+                                   cfg.global.exec_on_failure.clone().unwrap_or_default(),
+                                   ExecOn::Failure.as_u8()).await;
         }
     }
-    add_hook_from_cmd_list(mirror.exec_on_failure_extra.clone().unwrap_or_default(),
-                           ExecOn::Failure.as_u8());
-
+    add_hook_from_cmd_list(&mut provider, &mirror, 
+                           mirror.exec_on_failure_extra.clone().unwrap_or_default(),
+                           ExecOn::Failure.as_u8()).await;
     
     provider
 }

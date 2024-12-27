@@ -3,16 +3,13 @@ use std::fs::File;
 use std::io::{self, BufRead, Read};
 use std::process::{Command, exit};
 use std::os::unix::io::FromRawFd;
-use std::os::unix::process::CommandExt;
-use std::ffi::CString;
-
 use crate::hooks::{EmptyHook, JobHook};
 use crate::config::{CGroupConfig, MemBytes};
-
-
 use std::{fs, io::{ Write}, path::Path};
-use std::error::Error;
-use std::sync::{Arc, Mutex};
+use anyhow::{anyhow, Result};
+use std::sync::Arc;
+use async_trait::async_trait;
+use tokio::sync::Mutex;
 use log::{debug, info, log, trace};
 use crate::context::Context;
 // use cgroups_rs::hierarchies;
@@ -198,19 +195,21 @@ impl CGroupHook{
     // }
 }
 
+#[async_trait]
 impl JobHook for CGroupHook  {
 
-    fn pre_exec(&self,
+    async fn pre_exec(&self,
                 _provider_name: String,
                 _log_dir: String,
                 _log_file: String,
                 _working_dir: String,
                 _context: Arc<Mutex<Option<Context>>>)
-        -> Result<(), Box<dyn Error>> 
+        -> Result<()> 
     {
         todo!()
     }
-    fn post_exec(&self, context: Arc<Mutex<Option<Context>>>, provider_name: String) -> Result<(), Box<dyn Error>> {
+    
+    async fn post_exec(&self, context: Arc<Mutex<Option<Context>>>, provider_name: String) -> Result<()> {
         todo!()
     }
 }

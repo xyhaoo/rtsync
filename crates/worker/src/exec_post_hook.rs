@@ -1,9 +1,10 @@
 use std::collections::HashMap;
-use crate::hooks::{EmptyHook, JobHook};
-use crate::provider::MirrorProvider;
-use std::error::Error;
+use crate::hooks::JobHook;
+use anyhow::{anyhow, Result};
 use std::process::Command;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use async_trait::async_trait;
 use shlex::Shlex;
 use crate::context::Context;
 // hook在同步后执行命令
@@ -34,8 +35,9 @@ pub(crate) struct ExecPostHook {
     exec_on: ExecOn,
     command: Vec<String>,
 }
+
 impl ExecPostHook {
-    pub(crate) fn new(exec_on: ExecOn, command: &str) -> Result<ExecPostHook, Box<dyn Error>>
+    pub(crate) fn new(exec_on: ExecOn, command: &str) -> Result<ExecPostHook>
     {
         let cmd: Vec<String> = Shlex::new(command).collect();
         // if cmd.len() == 0 {
@@ -53,7 +55,7 @@ impl ExecPostHook {
             upstream: String,
             log_dir: String,
             log_file: String)
-            -> Result<(), Box<dyn Error>>
+            -> Result<()>
     {
         let exit_status = match self.exec_on {
             ExecOn::Success => "success",
@@ -77,7 +79,7 @@ impl ExecPostHook {
                 self.command[0].as_str()
             },
             _ => {
-                return Err("不合法的命令".into())
+                return Err(anyhow!("不合法的命令"))
             },
         };
         let mut cmd = Command::new(cmd);
@@ -90,16 +92,17 @@ impl ExecPostHook {
     }
 }
 
+#[async_trait]
 impl JobHook for ExecPostHook{
 
-    fn post_success(&self,
+    async fn post_success(&self,
                     _context: Arc<Mutex<Option<Context>>>,
                     provider_name: String,
                     working_dir: String,
                     upstream: String,
                     log_dir: String,
                     log_file: String) 
-        -> Result<(), Box<dyn Error>> 
+        -> Result<()> 
     {
         if let ExecOn::Success = self.exec_on{
             return self.r#do(provider_name, working_dir, upstream, log_dir, log_file);
@@ -107,14 +110,14 @@ impl JobHook for ExecPostHook{
         Ok(())
     }
     
-    fn post_fail(&self,
+    async fn post_fail(&self,
                  provider_name: String,
                  working_dir: String,
                  upstream: String,
                  log_dir: String,
                  log_file: String, 
                  _context: Arc<Mutex<Option<Context>>>) 
-        -> Result<(), Box<dyn Error>> 
+        -> Result<()> 
     {
         if let ExecOn::Failure = self.exec_on{
             return self.r#do(provider_name, working_dir, upstream, log_dir, log_file)

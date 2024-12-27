@@ -1,8 +1,9 @@
-
-use std::error::Error;
+use anyhow::{anyhow, Result};
 use std::path::Path;
 use std::process::Command;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use async_trait::async_trait;
+use tokio::sync::Mutex;
 use log::{error, info};
 use crate::config::MirrorConfig;
 use crate::context::Context;
@@ -36,19 +37,20 @@ impl BtrfsSnapshotHook {
 
 
 #[cfg(target_os = "linux")]
+#[async_trait]
 impl JobHook for BtrfsSnapshotHook {
 
     // 检查路径 snapshot_path/provider_name 是否存在
     // 情况1：不存在 => 创建一个新的子卷
     // 情况2：作为子卷存在 => 不处理
     // 情况3：作为目录存在 => 错误
-    fn pre_job(&self, working_dir: String, _provider_name: String) -> Result<(), Box<dyn Error>> {
+    fn pre_job(&self, working_dir: String, _provider_name: String) -> Result<()> {
         let path = working_dir;
         if !Path::new(&path).exists(){
             // 创建子卷
             if let Err(e) = create_btrfs_sub_volume(&path){
                 error!("{e}");
-                return Err(e.into())
+                return Err(anyhow!(e))
             }
             info!("创建了新的Btrfs子卷 {path}");
         }else {
@@ -57,7 +59,7 @@ impl JobHook for BtrfsSnapshotHook {
                 Ok(false) => {
                     let err = format!("该路径存在：{path} 但不是Btrfs子卷的路径");
                     error!("{err}");
-                    return Err(err.into())
+                    return Err(anyhow!(err))
                 }
                 Err(e) => {
                     return Err(e);
@@ -66,34 +68,16 @@ impl JobHook for BtrfsSnapshotHook {
         }
         Ok(())
     }
-
-    fn pre_exec(&self,
-                _provider_name: String,
-                _log_dir: String,
-                _log_file: String,
-                _working_dir: String,
-                _context: Arc<Mutex<Option<Context>>>) 
-        -> Result<(), Box<dyn Error>> 
-    {
-        Ok(())
-    }
-
-    fn post_exec(&self,
-                 _context: Arc<Mutex<Option<Context>>>, 
-                 _provider_name: String) 
-        -> Result<(), Box<dyn Error>> 
-    {
-        Ok(())
-    }
+    
 
     // 创建新的快照，如果旧快照存在，将其删除
-    fn post_success(&self,
+    async fn post_success(&self,
                     _context: Arc<Mutex<Option<Context>>>,
                     _provider_name: String,
                     working_dir: String,
                     _upstream: String,
                     _log_dir: String,
-                    _log_file: String) -> Result<(), Box<dyn Error>> 
+                    _log_file: String) -> Result<()> 
     {
         let snapshot_path = &self.mirror_snapshot_path;
         if !Path::new(snapshot_path).exists() {
@@ -102,14 +86,14 @@ impl JobHook for BtrfsSnapshotHook {
                 Ok(false) => {
                     let err = format!("该路径存在：{snapshot_path} 但不是Btrfs子卷的路径");
                     error!("{err}");
-                    return Err(err.into())
+                    return Err(anyhow!(err))
                 },
                 Ok(true) => {},
             }
             // snapshot_path是旧快照的地址，删除它
             if let Err(e) = delete_btrfs_sub_volume(snapshot_path){
                 error!("删除旧的Btrfs快照，其路径是：{snapshot_path}");
-                return Err(e.into())
+                return Err(anyhow!(e))
             }
             info!("删除了旧的快照，其路径是：{snapshot_path}")
         }
@@ -117,7 +101,7 @@ impl JobHook for BtrfsSnapshotHook {
         // 快照是可写的，因此可以很容易地删除
         if let Err(e) = create_btrfs_snapshot(&*working_dir, snapshot_path){
             error!("创建新的Btrfs快照失败，快照路径是：{snapshot_path}");
-            return Err(e.into())
+            return Err(anyhow!(e))
         }
         info!("创建了新的Btrfs快照，其路径是：{snapshot_path}");
         Ok(())
@@ -147,7 +131,7 @@ fn create_btrfs_sub_volume(path: &str) -> Result<(), String> {
 }
 
 #[cfg(target_os = "linux")]
-fn is_btrfs_sub_volume(path: &str) -> Result<bool, Box<dyn Error>> {
+fn is_btrfs_sub_volume(path: &str) -> Result<bool> {
     let output = Command::new("btrfs")
         .arg("subvolume")
         .arg("show")

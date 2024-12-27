@@ -1,13 +1,19 @@
-// use std::error::Error;
+// use anyhow::{anyhow, Result};
+// use std::future::Future;
+// use std::pin::Pin;
 // use std::sync::atomic::{AtomicU32, Ordering};
 // use std::time::Duration;
+// use std::sync::Arc;
 // use tokio::sync::mpsc;
+// use tokio::sync::Mutex;
 // use log::{debug, error, info, warn};
 // use crate::common::Empty;
 // use crate::hooks::JobHook;
 // use crate::provider::MirrorProvider;
 // use internal::status::SyncStatus;
 // use scopeguard::guard;
+// 
+// // 这个文件描述一个mirror job的工作流
 // 
 // // 控制动作枚举
 // #[derive(Debug, Clone)]
@@ -55,7 +61,7 @@
 // 
 // // Mirror Job结构
 // pub struct MirrorJob {
-//     provider: Box<dyn MirrorProvider>,
+//     provider: Arc<Box<dyn MirrorProvider>>,
 //     ctrl_chan: mpsc::Receiver<JobCtrlAction>,
 //     disabled: Option<mpsc::Receiver<Empty>>,
 //     state: AtomicU32,
@@ -66,7 +72,7 @@
 //     pub fn new(provider: Box<dyn MirrorProvider>) -> Self {
 //         let (_, rx) = mpsc::channel(1);
 //         Self {
-//             provider,
+//             provider: Arc::new(provider),
 //             ctrl_chan: rx,
 //             disabled: None,
 //             state: AtomicU32::new(WorkerState::None as u32),
@@ -74,8 +80,8 @@
 //         }
 //     }
 // 
-//     pub fn name(&self) -> String {
-//         self.provider.name()
+//     pub async fn name(&self) -> String {
+//         self.provider.name().await
 //     }
 // 
 //     pub fn state(&self) -> u32 {
@@ -86,32 +92,32 @@
 //         self.state.store(state, Ordering::SeqCst);
 //     }
 // 
-//     pub fn set_provider(&mut self, provider: Box<dyn MirrorProvider>) -> Result<(), Box<dyn Error>> {
+//     pub fn set_provider(&mut self, provider: Box<dyn MirrorProvider>) -> Result<()> {
 //         let s = self.state();
 //         if s != WorkerState::None as u32 && s != WorkerState::Disabled as u32 {
 //             return Err(format!("Provider cannot be switched when job state is {}", s).into());
 //         }
-//         self.provider = provider;
+//         self.provider = Arc::new(provider);
 //         Ok(())
 //     }
 // 
 //     async fn run_hooks(
 //         &self,
-//         hooks: &[Box<dyn JobHook>],
-//         action: impl Fn(&Box<dyn JobHook>) -> Result<(), Box<dyn Error>>,
+//         hooks: Arc<Mutex<Vec<Box<dyn JobHook>>>>,
+//         action: impl Fn(&Box<dyn JobHook>) -> Pin<Box<dyn Future<Output = Result<()>> + Send>>,
 //         hook_name: &str,
 //         manager_chan: &mpsc::Sender<JobMessage>,
-//     ) -> Result<(), Box<dyn Error>> 
+//     ) -> Result<()> 
 //     {
-//         for hook in hooks {
-//             if let Err(e) = action(hook) {
+//         for hook in hooks.lock().await.iter() {
+//             if let Err(e) = action(hook).await {
 //                 error!(
 //                     "failed at {} hooks for {}: {}",
-//                     hook_name, self.name(), e
+//                     hook_name, self.name().await, e
 //                 );
 //                 manager_chan.send(JobMessage {
 //                     status: SyncStatus::Failed,
-//                     name: self.name(),
+//                     name: self.name().await,
 //                     msg: format!("error exec hook {}: {}", hook_name, e),
 //                     schedule: true,
 //                 }).await?;
@@ -126,7 +132,7 @@
 //         mut kill: mpsc::Receiver<Empty>,
 //         job_done: mpsc::Sender<Empty>,
 //         manager_chan: mpsc::Sender<JobMessage>,
-//     ) -> Result<(), Box<dyn Error>> 
+//     ) -> Result<()> 
 //     {
 //         let _guard = scopeguard::guard((), |_| {
 //             let _ = job_done.send(());
@@ -135,40 +141,45 @@
 //         // 发送PreSyncing状态
 //         manager_chan.send(JobMessage {
 //             status: SyncStatus::PreSyncing,
-//             name: self.name(),
+//             name: self.name().await,
 //             msg: String::new(),
 //             schedule: false,
 //         }).await?;
-//         info!("start syncing: {}", self.name());
+//         info!("start syncing: {}", self.name().await);
 // 
-//         let hooks = self.provider.hooks();
-//         let r_hooks: Vec<Box<dyn JobHook>> = hooks.iter()
-//             .rev()
-//             .map(|h| h.clone())
-//             .collect();
+//         let hooks = self.provider.hooks().await;
+//         // let r_hooks: Vec<Box<dyn JobHook>> = hooks.lock().unwrap().iter()
+//         //     .rev()
+//         //     .map(|h| h.clone())
+//         //     .collect();
 // 
 //         // Pre-job hooks
 //         debug!("hooks: pre-job");
-//         self.run_hooks(&hooks, 
-//                 |h| h.pre_job(self.provider.working_dir(), self.name()), 
-//                 "pre-job", 
-//                 &manager_chan
+//         let working_dir = self.provider.working_dir().await;
+//         let log_dir = self.provider.log_dir().await;
+//         let log_file = self.provider.log_file().await;
+//         let context = self.provider.context().await;
+//         let name = self.name().await;
+//         self.run_hooks(Arc::clone(&hooks),
+//                        |h| h.pre_job(working_dir, name),
+//                        "pre-job",
+//                        &manager_chan
 //         ).await?;
 // 
-//         for retry in 0..self.provider.retry() {
-//             let mut stop_asap = false;
+//         for retry in 0..self.provider.retry().await {
+//             let mut stop_asap = false;  // stop job as soon as possible
 // 
 //             if retry > 0 {
-//                 info!("retry syncing: {}, retry: {}", self.name(), retry);
+//                 info!("retry syncing: {}, retry: {}", self.name().await, retry);
 //             }
 // 
 //             // Pre-exec hooks
-//             self.run_hooks(&hooks, 
-//                            |h| h.pre_exec(self.name(), 
-//                                           self.provider.log_dir(), 
-//                                           self.provider.log_file(), 
-//                                           self.provider.working_dir(), 
-//                                           self.provider.context()), 
+//             self.run_hooks(Arc::clone(&hooks),
+//                            |h| h.pre_exec(name.clone(), 
+//                                           log_dir.clone(), 
+//                                           log_file.clone(), 
+//                                           working_dir.clone(),
+//                                           Arc::clone(&context)), 
 //                            "pre-exec", 
 //                            &manager_chan
 //             ).await?;
@@ -176,7 +187,7 @@
 //             // 开始同步
 //             manager_chan.send(JobMessage {
 //                 status: SyncStatus::Syncing,
-//                 name: self.name(),
+//                 name: self.name().await,
 //                 msg: String::new(),
 //                 schedule: false,
 //             }).await?;
@@ -185,12 +196,11 @@
 //             let (started_tx, mut started_rx) = mpsc::channel(10);
 //             
 //             // 启动provider
-//             let provider = self.provider.as_mut();
 //             tokio::spawn(async move {
-//                 if let Err(e) = provider.run(started_tx).await {
-//                     let _ = sync_done_tx.send(Err(e)).await;
+//                 if let Err(e) = Arc::clone(&self.provider).run(started_tx).await {
+//                     sync_done_tx.send(Err(e)).await?;
 //                 } else {
-//                     let _ = sync_done_tx.send(Ok(())).await;
+//                     sync_done_tx.send(Ok(())).await?;
 //                 }
 //             });
 // 
@@ -199,7 +209,7 @@
 //             tokio::select! {
 //                 Some(result) = sync_done_rx.recv() => {
 //                     if let Err(e) = result {
-//                         error!("failed to start provider {}: {}", self.name(), e);
+//                         error!("failed to start provider {}: {}", self.name().await, e);
 //                         sync_err = Some(e);
 //                     }
 //                 }
@@ -209,9 +219,9 @@
 //             }
 // 
 //             // 处理超时和终止
-//             let timeout = self.provider.timeout();
+//             let timeout = self.provider.timeout().await;
 //             let timeout = if timeout.is_zero() {
-//                 Duration::from_secs(360000) // 100小时
+//                 Duration::from_secs(3600 * 100000) // 永远不会超时
 //             } else {
 //                 Duration::from_secs(timeout.num_seconds() as u64)
 //             };
@@ -224,29 +234,42 @@
 //                 }
 //                 _ = tokio::time::sleep(timeout) => {
 //                     warn!("provider timeout");
-//                     term_err = self.provider.terminate().err();
-//                     sync_err = Some(format!("{} timeout after {:?}", self.name(), timeout).into());
+//                     term_err = self.provider.terminate().await.err();
+//                     sync_err = Some(anyhow!(format!("{} timeout after {:?}", self.name().await, timeout)));
 //                 }
 //                 Some(_) = kill.recv() => {
 //                     debug!("received kill");
 //                     stop_asap = true;
-//                     term_err = self.provider.terminate().err();
-//                     sync_err = Some("killed by manager".into());
+//                     term_err = self.provider.terminate().await.err();
+//                     sync_err = Some(anyhow!("killed by manager"));
 //                 }
 //             }
 // 
 //             if let Some(e) = term_err {
-//                 error!("failed to terminate provider {}: {}", self.name(), e);
+//                 error!("failed to terminate provider {}: {}", self.name().await, e);
 //                 return Err(e.into());
 //             }
 // 
 //             // Post-exec hooks
-//             self.run_hooks(&r_hooks, |h| h.post_exec(self.provider.context(), self.name()), "post-exec", &manager_chan).await?;
+//             self.run_hooks(&r_hooks, 
+//                            |h| h.post_exec(self.provider.context().await, 
+//                                            self.name().await).await, 
+//                            "post-exec", 
+//                            &manager_chan).await?;
 // 
 //             if sync_err.is_none() {
 //                 // 同步成功
-//                 info!("succeeded syncing {}", self.name());
-//                 self.run_hooks(&r_hooks, |h| h.post_success(self.provider.context(), self.name(), self.provider.working_dir(), self.provider.upstream(), self.provider.log_dir(), self.provider.log_file()), "post-success", &manager_chan).await?;
+//                 info!("succeeded syncing {}", self.name().await);
+//                 debug!("post-success hooks");
+//                 self.run_hooks(&r_hooks, 
+//                                |h| h.post_success(self.provider.context(), 
+//                                                   self.name(), 
+//                                                   self.provider.working_dir(), 
+//                                                   self.provider.upstream(), 
+//                                                   self.provider.log_dir(), 
+//                                                   self.provider.log_file()), 
+//                                "post-success", 
+//                                &manager_chan).await?;
 //                 
 //                 self.size = self.provider.data_size();
 //                 manager_chan.send(JobMessage {
@@ -258,12 +281,20 @@
 //                 return Ok(());
 //             } else {
 //                 // 同步失败
-//                 warn!("failed syncing {}: {:?}", self.name(), sync_err);
-//                 self.run_hooks(&r_hooks, |h| h.post_fail(self.name(), self.provider.working_dir(), self.provider.upstream(), self.provider.log_dir(), self.provider.log_file(), self.provider.context()), "post-fail", &manager_chan).await?;
+//                 warn!("failed syncing {}: {:?}", self.name().await, sync_err);
+//                 self.run_hooks(&r_hooks, 
+//                                |h| h.post_fail(self.name().await, 
+//                                                self.provider.working_dir().await, 
+//                                                self.provider.upstream(), 
+//                                                self.provider.log_dir(), 
+//                                                self.provider.log_file(), 
+//                                                self.provider.context()), 
+//                                "post-fail", 
+//                                &manager_chan).await?;
 // 
 //                 manager_chan.send(JobMessage {
 //                     status: SyncStatus::Failed,
-//                     name: self.name(),
+//                     name: self.name().await,
 //                     msg: sync_err.unwrap().to_string(),
 //                     schedule: (retry == self.provider.retry() - 1) && (self.state() == WorkerState::Ready as u32),
 //                 }).await?;
@@ -292,7 +323,7 @@
 //                 let _ = semaphore.send(());
 //             }
 //             Some(_) = bypass_semaphore.recv() => {
-//                 info!("Concurrent limit ignored by {}", self.name());
+//                 info!("Concurrent limit ignored by {}", self.name().await);
 //                 let _ = self.run_job_wrapper(kill, job_done, manager_chan).await;
 //             }
 //             Some(_) = kill.recv() => {
@@ -310,19 +341,20 @@
 //         let (disabled_tx, disabled_rx) = mpsc::channel(1);
 //         self.disabled = Some(disabled_rx);
 // 
-//         let (bypass_tx, bypass_rx) = mpsc::channel(1);
 // 
 //         loop {
+//             let (bypass_tx, bypass_rx) = mpsc::channel(1);
+//             
 //             if self.state() == WorkerState::Ready as u32 {
 //                 let (kill_tx, kill_rx) = mpsc::channel(1);
 //                 let (job_done_tx, mut job_done_rx) = mpsc::channel(1);
 // 
-//                 let mut this = self;
+//                 
 //                 let manager_chan = manager_chan.clone();
 //                 let semaphore = semaphore.clone();
 //                 
 //                 tokio::spawn(async move {
-//                     this.run_job(
+//                     self.clone().run_job(
 //                         kill_rx,
 //                         job_done_tx,
 //                         manager_chan,
@@ -400,19 +432,4 @@
 //         }
 //     }
 // }
-// 
-// 
-// 
-// 
-// 
-// 
-// 
-// 
-// 
-// 
-// 
-// 
-// 
-// 
-// 
 // 

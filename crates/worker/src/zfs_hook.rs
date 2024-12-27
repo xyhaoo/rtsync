@@ -1,6 +1,7 @@
-use std::error::Error;
+use anyhow::{anyhow, Result};
 use std::path::Path;
 use std::process::Command;
+use async_trait::async_trait;
 use log::{error, info, log};
 use crate::hooks::{EmptyHook, JobHook};
 use crate::provider::MirrorProvider;
@@ -33,15 +34,17 @@ impl ZfsHook {
         }
     }
 }
+
+#[async_trait]
 impl JobHook for ZfsHook {
     // 检查工作目录是否为ZFS数据集
-    fn pre_job(&self, working_dir: String, provider_name: String) -> Result<(), Box<dyn Error>> {
+    fn pre_job(&self, working_dir: String, provider_name: String) -> Result<()> {
         // let working_dir = self.empty_hook.provider.working_dir();
         if !Path::new(&working_dir).exists() {
             let err = format!("目录 {} 不存在", working_dir);
             error!("{err}");
             self.print_help_message(working_dir, provider_name);
-            return Err(err.into());
+            return Err(anyhow!(err));
         }
         let output = Command::new("sh")
             .arg("-c")
@@ -54,7 +57,7 @@ impl JobHook for ZfsHook {
             let err = format!("{} 不是挂载点", working_dir);
             error!("{err}");
             self.print_help_message(working_dir, provider_name);
-            return Err(err.into());
+            return Err(anyhow!(err));
         }
         Ok(())
     }

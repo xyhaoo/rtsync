@@ -1,18 +1,17 @@
-use crate::provider::_LOG_FILE_KEY;
-use std::cell::RefCell;
 use std::{fs, io, thread, time::Duration};
-use std::error::Error;
+use anyhow::{anyhow, Result};
 use std::fs::Permissions;
 use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
-use std::rc::Rc;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use log::{debug, error, warn};
 use crate::config::{DockerConfig, MemBytes, MirrorConfig};
 use anymap::AnyMap;
 use crate::context::Context;
 use crate::hooks::{EmptyHook, JobHook};
 use crate::provider::MirrorProvider;
+use async_trait::async_trait;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct DockerHook {
@@ -63,14 +62,16 @@ impl DockerHook{
 
 }
 
+
+#[async_trait]
 impl JobHook for DockerHook {
-    fn pre_exec(&self,
-                _provider_name: String,
-                log_dir: String, 
-                log_file: String, 
-                working_dir: String,
-                context: Arc<Mutex<Option<Context>>>) 
-        -> Result<(), Box<dyn Error>>
+    async fn pre_exec(&self,
+                      _provider_name: String,
+                      log_dir: String,
+                      log_file: String,
+                      working_dir: String,
+                      context: Arc<Mutex<Option<Context>>>)
+                      -> Result<()>
     {
         // 如果目录不存在，则创建目录
         if let Err(err) = fs::read_dir(&working_dir) {
@@ -78,13 +79,13 @@ impl JobHook for DockerHook {
                 debug!("创建文件夹：{}", &working_dir);
                 fs::create_dir_all(&working_dir)?;
                 if let Err(e) = fs::set_permissions(&working_dir, Permissions::from_mode(0o755)){
-                    return Err(format!("创建文件夹 {} 失败: {}",&working_dir, e).into())
+                    return Err(anyhow!(format!("创建文件夹 {} 失败: {}",&working_dir, e)))
                 }
             }
         }
         
         // 重写working_dir
-        let mut cur_ctx = context.lock().unwrap();
+        let mut cur_ctx = context.lock().await;
         
         *cur_ctx = match cur_ctx.take(){
             Some(ctx) => Some(ctx.enter()),
@@ -104,10 +105,10 @@ impl JobHook for DockerHook {
         Ok(())
     }
 
-    fn post_exec(&self, 
-                 context: Arc<Mutex<Option<Context>>>, 
-                 provider_name: String) 
-        -> Result<(), Box<dyn Error>>
+    async fn post_exec(&self,
+                       context: Arc<Mutex<Option<Context>>>,
+                       provider_name: String)
+                       -> Result<()>
     {
         // Command::new("docker")
         //     .args(["rm", "-f", &provider_name])
@@ -135,7 +136,7 @@ impl JobHook for DockerHook {
                 }
                 _ => {}
             }
-            thread::sleep(Duration::from_secs(1));  // 一秒
+            tokio::time::sleep(Duration::from_secs(1)).await;  // 一秒
             retry -= 1;
         }
         if retry == 0{
@@ -143,7 +144,7 @@ impl JobHook for DockerHook {
         }
 
         // 😅
-        let mut cur_ctx = context.lock().unwrap();
+        let mut cur_ctx = context.lock().await;
         *cur_ctx = match cur_ctx.take(){
             Some(ctx) => {
                 match ctx.exit() {
@@ -157,44 +158,5 @@ impl JobHook for DockerHook {
     }
     
 }
-
-
-
-/*
-impl DockerHook<Vec<String>> {
-    // volumes返回已配置的卷和运行时需要的卷
-    // 包括mirror dirs和log file
-    // pub(crate) fn volumes(&self) -> Vec<String>{
-    //     let mut vols = Vec::with_capacity(self.volumes.len());
-    //     vols.extend(self.volumes.iter().cloned());
-    // 
-    //     let p = self.empty_hook.provider.as_ref();
-    //     if let Some(ctx) = p.context(){
-    //         if let Some(ivs) = ctx.get("volumes") {
-    //             vols.extend(ivs.iter().cloned());
-    //         }
-    //     }
-    //     
-    //     vols
-    // }
-}
-
-impl DockerHook<String> {
-    // pub(crate) fn log_file(&self) -> String{
-    //     let p = self.empty_hook.provider.as_ref();
-    //     if let Some(ctx) = p.context(){
-    //         if let Some(value) = ctx.get(&format!("{_LOG_FILE_KEY}:docker")){
-    //             return value
-    //         }
-    //     }
-    //     p.log_file()
-    // }
-    
-}
-impl DockerHook{
-    
-    
-}
- */
 
 
