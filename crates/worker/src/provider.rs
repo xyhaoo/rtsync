@@ -35,13 +35,14 @@ pub(crate) const _LOG_FILE_KEY: &str = "log_file";
 // MirrorProvider trait
 #[async_trait]
 pub trait MirrorProvider: Send + Sync {
+    // fn clone(&self) -> Box<dyn MirrorProvider>;
     // name
     async fn name(&self) -> String;
     fn upstream(&self) -> String;
     fn r#type(&self) -> ProviderEnum;
 
     // 一个Command从开始到结束的整个过程
-    async fn run(&mut self, started: Sender<common::Empty>) -> Result<()>;
+    async fn run(&self, started: Sender<common::Empty>) -> Result<()>;
     // job开始
     async fn start(&self) -> Result<()> {Ok(())}
     // 等待job结束
@@ -69,7 +70,7 @@ pub trait MirrorProvider: Send + Sync {
     async fn log_file(&self) -> String;
     
     fn is_master(&self) -> bool {false}
-    fn data_size(&self) -> String;
+    async fn data_size(&self) -> String;
 
     // enter context
     async fn enter_context(&mut self) -> Arc<Mutex<Option<Context>>>;

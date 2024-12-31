@@ -61,7 +61,7 @@ pub(crate) struct RsyncProvider {
     pub(crate) base_provider: Arc<RwLock<BaseProvider>>,
     pub(crate) rsync_config: Arc<RsyncConfig>,
     options: Arc<Vec<String>>,
-    data_size: Arc<String>,
+    data_size: Arc<Mutex<String>>,
 }
 
 unsafe impl Send for RsyncProvider{}
@@ -123,7 +123,7 @@ impl RsyncProvider {
             options.push(c.exclude_file);
         }
         if !c.extra_options.is_empty(){
-            println!("debug: 添加extra_options {:?}", c.extra_options.clone());
+            // println!("debug: 添加extra_options {:?}", c.extra_options.clone());
             options.extend(c.extra_options)
         }
         provider.options = Arc::from(options);
@@ -275,8 +275,8 @@ impl MirrorProvider for RsyncProvider  {
     }
     
     // 运行rsync命令并等待结果，记录同步文件大小。如果rsync异常，则解析错误并将错误返回
-    async fn run(&mut self, started: Sender<Empty>) -> Result<()> {
-        self.data_size = Arc::from(String::new());
+    async fn run(&self, started: Sender<Empty>) -> Result<()> {
+        { *self.data_size.lock().await = String::new(); }
         
         println!("debug: 等待启动。。。");
         
@@ -318,7 +318,7 @@ impl MirrorProvider for RsyncProvider  {
         }
 
         if let Some(size) = extract_size_from_rsync_log(&*self.log_file().await) {
-            self.data_size = size.into()
+            *self.data_size.lock().await = size.into()
         };
         Ok(())
     }
@@ -398,8 +398,8 @@ impl MirrorProvider for RsyncProvider  {
         self.base_provider.read().await.log_file().await
     }
 
-    fn data_size(&self) -> String {
-        self.data_size.to_string()
+    async fn data_size(&self) -> String {
+        self.data_size.lock().await.to_string()
     }
 
     async fn enter_context(&mut self) -> Arc<Mutex<Option<Context>>> {

@@ -60,7 +60,7 @@ pub(crate) struct TwoStageRsyncProvider {
     pub(crate) two_stage_rsync_config: Arc<TwoStageRsyncConfig>,
     stage1_options: Arc<Vec<String>>,
     stage2_options: Arc<Vec<String>>,
-    data_size: Arc<String>,
+    data_size: Arc<Mutex<String>>,
 }
 
 unsafe impl Send for TwoStageRsyncProvider{}
@@ -294,12 +294,12 @@ impl MirrorProvider for TwoStageRsyncProvider {
         ProviderEnum::TwoStageRsync
     }
 
-    async fn run(&mut self, started: Sender<Empty>) -> Result<()> {
+    async fn run(&self, started: Sender<Empty>) -> Result<()> {
         if self.is_running().await {
             return Err(anyhow!("provider现在正在运行"))
         }
         let base_provider_lock = self.base_provider.write().await;
-        self.data_size = Arc::from(String::new());
+        { *self.data_size.lock().await = String::new(); }
         drop(base_provider_lock);
         
         let stages = vec![1,2];
@@ -354,7 +354,7 @@ impl MirrorProvider for TwoStageRsyncProvider {
         }
         
         if let Some(size) = extract_size_from_rsync_log(&*self.log_file().await) {
-            self.data_size = size.into()
+            *self.data_size.lock().await = size.into()
         };
         Ok(())
     }
@@ -406,8 +406,8 @@ impl MirrorProvider for TwoStageRsyncProvider {
         self.base_provider.read().await.log_file().await
     }
 
-    fn data_size(&self) -> String {
-        self.data_size.to_string()
+    async fn data_size(&self) -> String {
+        self.data_size.lock().await.to_string()
     }
 
     async fn enter_context(&mut self) -> Arc<Mutex<Option<Context>>> {

@@ -1,5 +1,6 @@
 use anyhow::{anyhow, Result};
 use std::ffi::OsStr;
+use std::fmt::Debug;
 use std::fs::{File, OpenOptions};
 use std::future::IntoFuture;
 use std::path::{Path, PathBuf};
@@ -115,7 +116,7 @@ impl BaseProvider {
                 self.zfs = Arc::from(Some(zfs.clone()));
             },
             HookType::Docker(ref docker) => {
-                println!("debug: 添加docker hook {:?}", docker);
+                // println!("debug: 添加docker hook {:?}", docker);
                 self.docker = Arc::from(Some(docker.clone()));
             },
             _ => {}
@@ -262,8 +263,7 @@ impl BaseProvider {
     pub(crate) async fn start(&mut self) -> Result<()>{
         let cmd_job = self.cmd.as_mut().unwrap();
         let mut cmd_lock = cmd_job.cmd.lock().await;
-        println!("命令启动：{:#?}", *cmd_lock);
-        debug!("命令启动：{:#?}", *cmd_lock);
+        debug!("命令启动：{:?}", *cmd_lock);
         let (mut tx_lock, mut rx_lock) = 
             (cmd_job.finished_tx.lock().await, cmd_job.finished_rx.lock().await);
         let (tx, rx) = channel(1);
@@ -300,12 +300,12 @@ impl BaseProvider {
         
         debug!("将is_running字段设置为false，调用者：{}", self.name());
         self.is_running.store(false, Ordering::Release);
-        println!("debug: 将is_running字段设置为false，调用者：{}", self.name());
+        // println!("debug: 将is_running字段设置为false，调用者：{}", self.name());
         ret
     }
 
     pub(crate) async fn terminate(&self) -> Result<()>{
-        println!("debug: 进入terminate函数");
+        // println!("debug: 进入terminate函数");
         debug!("正在终止provider：{}", self.name());
         if !self.is_running(){
             warn!("调用了终止函数，但是此时没有检测到 {} 正在运行", self.name());
@@ -322,17 +322,17 @@ impl BaseProvider {
         }
         
         if let Some(docker) = self.docker.as_ref() {
-            println!("debug: 终止docker");
+            // println!("debug: 终止docker");
             let name = docker.name(self.name());
-            let output = Command::new("docker").arg("stop")
+            let _ = Command::new("docker").arg("stop")
                 .arg("-t").arg("2")
                 .arg(name)
                 .output().await?;
-            println!("debug: output是 {output:?}");
+            // println!("debug: output是 {output:?}");
             return Ok(());
         }
         
-        println!("debug: 发送 SIGTERM 信号");
+        // println!("debug: 发送 SIGTERM 信号");
         let pid = Pid::from_raw(pid.unwrap());
         // 发送 SIGTERM 信号
         if let Err(e) = kill(pid, Signal::SIGTERM){

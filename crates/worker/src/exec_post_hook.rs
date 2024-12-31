@@ -82,11 +82,14 @@ impl ExecPostHook {
                 return Err(anyhow!("不合法的命令"))
             },
         };
-        let mut cmd = Command::new(cmd);
+        // FIXME：改动与rsync_provider相同
+        let mut command = Command::new("bash");
+        command.arg(cmd);
         for (key, value) in env {
-            cmd.env(key, value);
+            command.env(key, value);
         }
-        cmd.args(args).status()?;
+        // println!("debug cmd: {:?}\n参数 {:?}", command.get_program(), command.get_args());
+        command.args(args).status()?;
 
         Ok(())
     }

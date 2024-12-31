@@ -2,6 +2,7 @@ use crate::common::Empty;
 use std::collections::HashMap;
 use std::fs::{File, Permissions};
 use std::{env, fs, io, process, thread};
+use std::os::unix::process::ExitStatusExt;
 use anyhow::{anyhow, Error, Result};
 use tokio::process::{Child, Command};
 use std::process::Stdio;
@@ -84,14 +85,13 @@ impl CmdJob {
                             }
                             // 命令正确，运行时是否出错都会进入这个分支，通过返回的状态码来判断是否正常退出
                             Ok(exit_status) => {
-                                println!("{}", format!("退出状态: {}", exit_status.to_string()));
                                 match exit_status.code() {
                                     // 正常退出
                                     Some(0) => {},
                                     // 被中断
                                     None => {
-                                        *ret_err_lock = format!("退出状态: {}", exit_status.to_string());
-                                        return Err(anyhow!(format!("命令被信号中断: {}", exit_status.to_string())))
+                                        *ret_err_lock = format!("退出状态: {:?}", exit_status.signal());
+                                        return Err(anyhow!("命令被信号中断: {}", exit_status))
                                     }
                                     // 非正常退出
                                     _ => {
@@ -124,10 +124,10 @@ pub(crate) fn new_environ(env: HashMap<String, String>, inherit: bool) -> HashMa
         }
     }
 
-    println!("现在的环境变量：");
+    // println!("现在的环境变量：");
     // 添加传入的 env 变量
     for (key, value) in env.iter() {
-        println!("{}={}", key, value);
+        // println!("{}={}", key, value);
         environ.insert(key.clone(), value.clone());
     }
     environ

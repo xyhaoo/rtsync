@@ -51,7 +51,7 @@ pub(crate) struct CmdProvider{
     pub(crate) base_provider: Arc<RwLock<BaseProvider>>,
     pub(crate) cmd_config: Arc<CmdConfig>,
     command: Arc<Vec<String>>,
-    data_size: Arc<String>,
+    data_size: Arc<Mutex<String>>,
     fail_on_match: Arc<Option<Regex>>,
     size_pattern: Arc<Option<Regex>>,
 }
@@ -91,8 +91,8 @@ impl CmdProvider{
         //     return Err("未检测到命令".into())
         // }
 
-        println!("debug: provider.cmd: {:?}", cmd);
-
+        
+        // println!("debug: provider.cmd: {:?}", cmd);
         provider.command = Arc::from(cmd);
         if c.fail_on_match.len() > 0{
             match Regex::new(&*c.fail_on_match) {
@@ -100,7 +100,7 @@ impl CmdProvider{
                     return Err(anyhow!(format!("匹配正则表达式fail_on_match失败：{}", e)))
                 }
                 Ok(fail_on_match) => {
-                    println!("debug：初始化regex成功：{:?}", fail_on_match);
+                    // println!("debug：初始化regex成功：{:?}", fail_on_match);
                     provider.fail_on_match = Arc::from(Some(fail_on_match));
                 }
             }
@@ -111,7 +111,7 @@ impl CmdProvider{
                     return Err(anyhow!(format!("匹配正则表达式size_pattern失败：{}", e)))
                 }
                 Ok(size_pattern) => {
-                    println!("debug: size_pattern regex初始化成功{:?}", size_pattern);
+                    // println!("debug: size_pattern regex初始化成功{:?}", size_pattern);
                     provider.size_pattern = Arc::from(Some(size_pattern));
                 }
             }
@@ -152,7 +152,7 @@ impl CmdProvider{
             }
             // 添加卷
             for vol in d.volumes.iter(){
-                println!("debug: 数据卷 {}", &vol);
+                // println!("debug: 数据卷 {}", &vol);
                 debug!("数据卷: {}", &vol);
                 args.extend(vec!["-v".to_string(), vol.clone()])
             }
@@ -235,22 +235,14 @@ impl MirrorProvider for CmdProvider{
         ProviderEnum::Command
     }
 
-    async fn run(&mut self, started: Sender<Empty>) -> Result<()> {
-        self.data_size = Arc::from(String::new());
+    async fn run(&self, started: Sender<Empty>) -> Result<()> {
+        { *self.data_size.lock().await = String::new(); }
 
-        println!("debug: 等待启动。。。");
+        // println!("debug: 等待启动。。。");
 
         MirrorProvider::start(self).await?;
-        
+
         started.send(()).await.expect("发送失败");
-        // let mut count = 0;
-        // loop {
-        //     if count > 100{
-        //         break
-        //     }
-        //     println!("wait loop");
-        //     count += 1;
-        // }
         let base_provider_lock = self.base_provider.read().await;
 
         match base_provider_lock.wait().await {
@@ -258,7 +250,7 @@ impl MirrorProvider for CmdProvider{
                 return Err(err);
             }
             Ok(exit_code) if exit_code != 0 => {
-                println!("捕获到非正常退出！状态码：{exit_code}");
+                // println!("捕获到非正常退出！状态码：{exit_code}");
                 return Err(anyhow!(format!("错误状态码： {}", exit_code)));
             }
             // 正常退出
@@ -268,7 +260,7 @@ impl MirrorProvider for CmdProvider{
         if let Some(fail_on_match) = self.fail_on_match.as_ref(){
             match find_all_submatches_in_file(&*self.log_file().await, fail_on_match){
                 Ok(sub_matches) => {
-                    println!("debug: 找到的匹配项：{:?}", sub_matches);
+                    // println!("debug: 找到的匹配项：{:?}", sub_matches);
                     info!("在文件中找到所有的子匹配项：{:?}", sub_matches);
                     if sub_matches.len() != 0{
                         debug!("匹配失败{:?}", sub_matches);
@@ -281,10 +273,10 @@ impl MirrorProvider for CmdProvider{
             }
         }
         if let Some(size_pattern) = self.size_pattern.as_ref(){
-            self.data_size = extract_size_from_log(&*self.log_file().await, size_pattern)
+            *self.data_size.lock().await = extract_size_from_log(&*self.log_file().await, size_pattern)
                 .unwrap_or_default()
                 .into();
-            println!("debug: 找到的匹配项：{:?}", self.data_size);
+            // println!("debug: 找到的匹配项：{:?}", self.data_size);
         }
         Ok(())
     }
@@ -293,27 +285,27 @@ impl MirrorProvider for CmdProvider{
         if self.is_running().await{
             return Err(anyhow!("provider现在正在运行"))
         }
-        
+
         self.cmd().await;
         let mut base_provider_lock = self.base_provider.write().await;
         base_provider_lock.prepare_log_file(false).await?;
         base_provider_lock.start().await?;
         base_provider_lock.is_running.store(true, Ordering::Release);
         
-        println!("debug: 将is_running字段设置为true :{}", base_provider_lock.name());
+        // println!("debug: 将is_running字段设置为true :{}", base_provider_lock.name());
         debug!("将is_running字段设置为true :{}", base_provider_lock.name());
-        
+
         drop(base_provider_lock);
         Ok(())
     }
 
     async fn terminate(&self) -> Result<()> {
-        println!("debug: 进入terminate！");
+        // println!("debug: 进入terminate！");
         self.base_provider.read().await.terminate().await
     }
 
     async fn is_running(&self) -> bool {
-        println!("debug: 读取is_running ");
+        // println!("debug: 读取is_running ");
         self.base_provider.read().await.is_running()
     }
     // fn zfs(&self) -> Option<&ZfsHook> {
@@ -357,8 +349,8 @@ impl MirrorProvider for CmdProvider{
         self.base_provider.read().await.log_file().await
     }
 
-    fn data_size(&self) -> String {
-        self.data_size.to_string()
+    async fn data_size(&self) -> String {
+        self.data_size.lock().await.to_string()
     }
 
     async fn enter_context(&mut self) -> Arc<Mutex<Option<Context>>> {

@@ -1,4 +1,4 @@
-An implementation of tunasync in Rust, so it‘s called rsync(rust implemented tunasync).
+An implementation of tunasync in Rust, so it‘s called rtsync(rust implemented tunasync).
 
 
 

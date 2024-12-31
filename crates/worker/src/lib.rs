@@ -1,3 +1,5 @@
+extern crate core;
+
 mod config;
 mod provider;
 mod common;
@@ -25,5 +27,6 @@ mod docker_test;
 mod exec_post_test;
 mod zfs_hook_test;
 mod cgroup_test;
+mod job_test;
 
 

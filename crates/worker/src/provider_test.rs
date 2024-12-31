@@ -129,7 +129,7 @@ exit 0
         provider.run(channel(1).0).await.unwrap();
         let logged_content = fs::read_to_string(provider.log_file().await).unwrap();
         assert_eq!(expected_output, logged_content);
-        assert_eq!(provider.data_size(), "1.33T".to_string());
+        assert_eq!(provider.data_size().await, "1.33T".to_string());
     }
 
     #[tokio::test]
@@ -575,7 +575,7 @@ sleep 10
         c.fail_on_match = "[a-z]+".to_string();
         let mut provider = CmdProvider::new(c).await.unwrap();
         assert!(provider.run(channel(1).0).await.is_err());
-        assert_eq!(provider.data_size(), "");
+        assert_eq!(provider.data_size().await, "");
     }
 
     async fn test_fail_on_match_regex_does_not_matches(mut c: CmdConfig) {
@@ -596,8 +596,8 @@ sleep 10
         let mut provider = CmdProvider::new(c).await.unwrap();
         provider.run(channel(1).0).await.unwrap();
 
-        assert!(!provider.data_size().is_empty());
-        let datasize = provider.data_size().parse::<f32>().unwrap();
+        assert!(!provider.data_size().await.is_empty());
+        let datasize = provider.data_size().await.parse::<f32>().unwrap();
     }
 
     async fn test_size_pattern_regex_does_not_matches(mut c: CmdConfig) {
@@ -605,7 +605,7 @@ sleep 10
         let mut provider = CmdProvider::new(c).await.unwrap();
         provider.run(channel(1).0).await.unwrap();
 
-        assert!(provider.data_size().is_empty());
+        assert!(provider.data_size().await.is_empty());
     }
 
     async fn test_size_pattern_regex_meets_dev_null(mut c: CmdConfig) {
@@ -614,7 +614,7 @@ sleep 10
         let mut provider = CmdProvider::new(c).await.unwrap();
         // FIXME: 源代码里判断run失败，但是run里在解析size_pattern时忽略了find_all_submatches_in_file返回的错误，所以不应该为失败
         assert!(provider.run(channel(1).0).await.is_ok());
-        assert!(provider.data_size().is_empty());
+        assert!(provider.data_size().await.is_empty());
     }
 
     #[tokio::test]
