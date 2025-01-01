@@ -34,10 +34,10 @@ pub(crate) const _LOG_FILE_KEY: &str = "log_file";
 
 // MirrorProvider trait
 #[async_trait]
-pub trait MirrorProvider: Send + Sync {
+pub trait MirrorProvider: Send + Sync + std::fmt::Debug {
     // fn clone(&self) -> Box<dyn MirrorProvider>;
     // name
-    async fn name(&self) -> String;
+    fn name(&self) -> String;
     fn upstream(&self) -> String;
     fn r#type(&self) -> ProviderEnum;
 

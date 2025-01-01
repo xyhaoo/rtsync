@@ -19,6 +19,7 @@ pub(crate) fn err_process_not_started() -> Error {
 
 // Mutex<CmdJob>
 
+#[derive(Debug)]
 pub(crate) struct CmdJob
 {
     pub(crate) cmd: Mutex<Command>,

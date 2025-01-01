@@ -83,8 +83,8 @@ impl ExecPostHook {
             },
         };
         // FIXME：改动与rsync_provider相同
-        let mut command = Command::new("bash");
-        command.arg(cmd);
+        let mut command = Command::new(cmd);
+        // command.arg(cmd);
         for (key, value) in env {
             command.env(key, value);
         }

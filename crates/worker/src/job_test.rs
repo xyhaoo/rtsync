@@ -44,7 +44,7 @@ mod tests {
         };
 
         let provider = CmdProvider::new(c.clone()).await.unwrap();
-        assert_eq!(provider.name().await, c.name);
+        assert_eq!(provider.name(), c.name);
         assert_eq!(provider.working_dir().await, c.working_dir);
         assert_eq!(provider.log_dir().await, c.log_dir);
         assert_eq!(provider.log_file().await, c.log_file);
@@ -67,7 +67,7 @@ mod tests {
 
         let expected_output = format!("{}\n{}\n{}\n{}\n",
                                       provider.working_dir().await,
-                                      provider.name().await,
+                                      provider.name(),
                                       provider.cmd_config.upstream_url,
                                       provider.log_file().await);
         {

@@ -28,7 +28,7 @@ use crate::config::{DockerConfig, MirrorConfig};
 
 // baseProvider是providers的基本混合
 // Mutex<BaseProvider>
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub(crate) struct BaseProvider {
     pub(crate) ctx: Arc<Mutex<Option<Context>>>,
     pub(crate) name: String,

@@ -25,7 +25,7 @@ use crate::hooks::{HookType, JobHook};
 use crate::provider::{MirrorProvider, _LOG_DIR_KEY, _LOG_FILE_KEY, _WORKING_DIR_KEY};
 use crate::runner::CmdJob;
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub(crate) struct TwoStageRsyncConfig {
     pub(crate) name: String,
     pub(crate) rsync_cmd: String,
@@ -54,7 +54,7 @@ pub(crate) struct TwoStageRsyncConfig {
 }
 
 // RsyncProvider提供了基于rsync的同步作业的实现
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub(crate) struct TwoStageRsyncProvider {
     pub(crate) base_provider: Arc<RwLock<BaseProvider>>,
     pub(crate) two_stage_rsync_config: Arc<TwoStageRsyncConfig>,
@@ -282,8 +282,8 @@ impl TwoStageRsyncProvider {
 
 #[async_trait]
 impl MirrorProvider for TwoStageRsyncProvider {
-    async fn name(&self) -> String {
-        self.base_provider.read().await.name()
+    fn name(&self) -> String {
+        self.two_stage_rsync_config.name.clone()
     }
 
     fn upstream(&self) -> String {

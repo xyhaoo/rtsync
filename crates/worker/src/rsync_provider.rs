@@ -27,7 +27,7 @@ use crate::provider::{MirrorProvider, _LOG_DIR_KEY, _LOG_FILE_KEY, _WORKING_DIR_
 use crate::runner::{err_process_not_started, CmdJob};
 use async_trait::async_trait;
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub(crate) struct RsyncConfig{
     pub(crate) name: String,
     pub(crate) rsync_cmd: String,
@@ -56,7 +56,7 @@ pub(crate) struct RsyncConfig{
 }
 
 // RsyncProvider提供了基于rsync的同步作业的实现
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub(crate) struct RsyncProvider {
     pub(crate) base_provider: Arc<RwLock<BaseProvider>>,
     pub(crate) rsync_config: Arc<RsyncConfig>,
@@ -262,8 +262,8 @@ impl RsyncProvider {
 
 #[async_trait]
 impl MirrorProvider for RsyncProvider  {
-    async fn name(&self) -> String {
-        self.base_provider.read().await.name()
+    fn name(&self) -> String {
+        self.rsync_config.name.clone()
     }
 
     fn upstream(&self) -> String {

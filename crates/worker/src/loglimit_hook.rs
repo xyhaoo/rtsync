@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Result};
 use std::{fs, io};
-use std::fs::Permissions;
+use std::fs::{DirEntry, Permissions};
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::Path;
 use std::sync::Arc;
@@ -67,7 +67,7 @@ impl JobHook for LogLimiter{
                 matched_files.sort_by(|a, b| 
                     b.metadata().unwrap().modified().unwrap()
                         .cmp(&a.metadata().unwrap().modified().unwrap()));
-
+                
                 // 保留最新的 10 个文件，删除其余的
                 if matched_files.len() > 9 {
                     for file in &matched_files[9..] {

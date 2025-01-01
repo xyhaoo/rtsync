@@ -32,12 +32,12 @@ mod tests {
     async fn working_dir_do_not_exist(provider: CmdProvider, tmp_dir: TempDir){
         tmp_dir.close().unwrap();
         let hook = ZfsHook::new("test_pool".into());
-        let err = hook.pre_job(provider.working_dir().await, provider.name().await);
+        let err = hook.pre_job(provider.working_dir().await, provider.name());
         assert!(err.is_err());
     }
     async fn working_dir_is_not_a_mount_point(provider: CmdProvider, tmp_dir: TempDir){
         let hook = ZfsHook::new("test_pool".into());
-        let err = hook.pre_job(provider.working_dir().await, provider.name().await);
+        let err = hook.pre_job(provider.working_dir().await, provider.name());
         assert!(err.is_err());
     }
 

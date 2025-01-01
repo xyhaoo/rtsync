@@ -84,7 +84,7 @@ async fn send_err(e: anyhow::Error,
 }
 
 // Mirror Job结构
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct MirrorJob {
     pub(crate) provider: Arc<Box<dyn MirrorProvider>>,
     pub(crate) ctrl_chan_tx: Sender<JobCtrlAction>,
@@ -93,6 +93,11 @@ pub struct MirrorJob {
     pub(crate) disabled_rx: Arc<Mutex<Option<Receiver<Empty>>>>,
     state: Arc<AtomicU32>,
     size: Arc<Mutex<String>>,
+}
+impl PartialEq for MirrorJob {
+    fn eq(&self, other: &Self) -> bool {
+        self.provider.name() == other.provider.name()
+    }
 }
 
 impl MirrorJob {
@@ -109,8 +114,8 @@ impl MirrorJob {
         }
     }
 
-    pub async fn name(&self) -> String {
-        self.provider.name().await
+    pub fn name(&self) -> String {
+        self.provider.name()
     }
 
     pub fn state(&self) -> u32 {
@@ -169,19 +174,19 @@ impl MirrorJob {
             HookAction::PreJob => {
                 for hook in hooks.lock().await.iter() {
                     if let Err(e) = hook.pre_job(self.provider.working_dir().await, 
-                                                 self.name().await) {
-                        return send_err(e, "pre-job", &self.name().await, manager_chan).await
+                                                 self.name()) {
+                        return send_err(e, "pre-job", &self.name(), manager_chan).await
                     }
                 }
             },
             HookAction::PreExec => {
                 for hook in hooks.lock().await.iter() {
-                    if let Err(e) = hook.pre_exec(self.name().await, 
-                                                  self.provider.working_dir().await, 
+                    if let Err(e) = hook.pre_exec(self.name(), 
                                                   self.provider.log_dir().await, 
+                                                  self.provider.log_file().await, 
                                                   self.provider.working_dir().await, 
                                                   self.provider.context().await).await {
-                        return send_err(e, "pre-exec", &self.name().await, manager_chan).await
+                        return send_err(e, "pre-exec", &self.name(), manager_chan).await
                     }
                 }
             },
@@ -189,8 +194,8 @@ impl MirrorJob {
             HookAction::PostExec => {
                 for hook in hooks.lock().await.iter().rev() {
                     if let Err(e) = hook.post_exec(self.provider.context().await, 
-                                                   self.name().await).await {
-                        return send_err(e, "post-exec", &self.name().await, manager_chan).await
+                                                   self.name()).await {
+                        return send_err(e, "post-exec", &self.name(), manager_chan).await
                     }
                 }
             },
@@ -198,25 +203,25 @@ impl MirrorJob {
             HookAction::PostSuccess => {
                 for hook in hooks.lock().await.iter().rev() {
                     if let Err(e) = hook.post_success(self.provider.context().await, 
-                                                      self.name().await, 
+                                                      self.name(), 
                                                       self.provider.working_dir().await, 
                                                       self.provider.upstream(), 
                                                       self.provider.log_dir().await, 
                                                       self.provider.log_file().await).await {
-                        return send_err(e, "post-success", &self.name().await, manager_chan).await
+                        return send_err(e, "post-success", &self.name(), manager_chan).await
                     }
                 }
             },
             // 需要倒序
             HookAction::PostFail => {
                 for hook in hooks.lock().await.iter().rev() {
-                    if let Err(e) = hook.post_fail(self.name().await, 
+                    if let Err(e) = hook.post_fail(self.name(), 
                                                    self.provider.working_dir().await, 
                                                    self.provider.upstream(), 
                                                    self.provider.log_dir().await, 
                                                    self.provider.log_file().await, 
                                                    self.provider.context().await).await {
-                        return send_err(e, "post-fail", &self.name().await, manager_chan).await
+                        return send_err(e, "post-fail", &self.name(), manager_chan).await
                     }
                 }
             },
@@ -239,11 +244,11 @@ impl MirrorJob {
         // 发送PreSyncing状态
         manager_chan.send(JobMessage {
             status: SyncStatus::PreSyncing,
-            name: self.name().await,
+            name: self.name(),
             msg: String::new(),
             schedule: false,
         }).await?;
-        info!("开始同步: {}", self.name().await);
+        info!("开始同步: {}", self.name());
 
         let hooks = self.provider.hooks().await;
 
@@ -258,7 +263,7 @@ impl MirrorJob {
             let mut stop_asap = false;  // stop job as soon as possible
 
             if retry > 0 {
-                info!("重试同步: {}, 重试次数: {}", self.name().await, retry);
+                info!("重试同步: {}, 重试次数: {}", self.name(), retry);
             }
 
             // Pre-exec hooks
@@ -267,7 +272,7 @@ impl MirrorJob {
             // 开始同步
             manager_chan.send(JobMessage {
                 status: SyncStatus::Syncing,
-                name: self.name().await,
+                name: self.name(),
                 msg: String::new(),
                 schedule: false,
             }).await?;
@@ -290,7 +295,7 @@ impl MirrorJob {
             tokio::select! {
                 Some(result) = sync_done_rx.recv() => {
                     if let Err(e) = result {
-                        error!("provider {} 启动失败: {}", self.name().await, e);
+                        error!("provider {} 启动失败: {}", self.name(), e);
                         sync_err = Err(e.root_cause().to_string());  // it will be read again later
                     }
                 }
@@ -319,7 +324,7 @@ impl MirrorJob {
                 _ = tokio::time::sleep(timeout) => {
                     warn!("provider 超时");
                     term_err = self.provider.terminate().await.err();
-                    sync_err = Err(format!("{} 超时，等待时间 {:?}", self.name().await, timeout));
+                    sync_err = Err(format!("{} 超时，等待时间 {:?}", self.name(), timeout));
                 }
                 None = kill.recv() => {
                     debug!("收到终止信号");
@@ -330,7 +335,7 @@ impl MirrorJob {
             }
 
             if let Some(e) = term_err {
-                error!("终止provider {} 失败: {}", self.name().await, e);
+                error!("终止provider {} 失败: {}", self.name(), e);
                 return Err(e.into());
             }
 
@@ -339,7 +344,7 @@ impl MirrorJob {
 
             if sync_err.is_ok() {
                 // 同步成功
-                info!("成功同步 {}", self.name().await);
+                info!("成功同步 {}", self.name());
                 debug!("post-success hooks");
                 
                 self.run_hooks(Arc::clone(&hooks), HookAction::PostSuccess, &manager_chan).await?;
@@ -347,21 +352,21 @@ impl MirrorJob {
                 { *self.size.lock().await = self.provider.data_size().await; }
                 manager_chan.send(JobMessage {
                     status: SyncStatus::Success,
-                    name: self.name().await,
+                    name: self.name(),
                     msg: String::new(),
                     schedule: self.state() == WorkerState::Ready as u32,
                 }).await?;
                 return Ok(());
             } else {
                 // 同步失败，包括被终止
-                warn!("同步 {} 失败: {:?}", self.name().await, sync_err);
+                warn!("同步 {} 失败: {:?}", self.name(), sync_err);
                 debug!("post-fail hooks");
 
                 self.run_hooks(Arc::clone(&hooks), HookAction::PostFail,&manager_chan).await?;
 
                 manager_chan.send(JobMessage {
                     status: SyncStatus::Failed,
-                    name: self.name().await,
+                    name: self.name(),
                     msg: sync_err.err().unwrap().to_string(),
                     schedule: (retry == self.provider.retry().await - 1) && (self.state() == WorkerState::Ready as u32),
                 }).await?;
@@ -400,7 +405,7 @@ impl MirrorJob {
             }
             Some(_) = bypass_semaphore_lock.recv() => {
                 drop(bypass_semaphore_lock);
-                warn!("{} 忽略了并发限制", self.name().await);
+                warn!("{} 忽略了并发限制", self.name());
                 let _ = self.run_job_wrapper(kill, job_done, manager_chan).await;
             }
             None = kill.recv() => {

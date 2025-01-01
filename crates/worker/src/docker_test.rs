@@ -104,7 +104,7 @@ sleep 30
 
         // 😥
         provider.docker().await.as_ref().clone().unwrap()
-            .pre_exec(provider.name().await,
+            .pre_exec(provider.name(),
                       provider.log_dir().await,
                       provider.log_file().await,
                       provider.working_dir().await,
@@ -129,7 +129,7 @@ sleep 30
         // Wait for docker running
         for _ in 0..8{
             // 😅
-            let names = get_docker_by_name(provider.docker().await.as_ref().clone().unwrap().name(provider.name().await)).unwrap();
+            let names = get_docker_by_name(provider.docker().await.as_ref().clone().unwrap().name(provider.name())).unwrap();
             if !names.len() == 0 {
                 break;
             }
@@ -137,13 +137,13 @@ sleep 30
         }
 
         // assert container running
-        let names = get_docker_by_name(provider.docker().await.as_ref().clone().unwrap().name(provider.name().await)).unwrap();
-        assert_eq!(names, format!("{}\n", provider.docker().await.as_ref().clone().unwrap().name(provider.name().await)));
+        let names = get_docker_by_name(provider.docker().await.as_ref().clone().unwrap().name(provider.name())).unwrap();
+        assert_eq!(names, format!("{}\n", provider.docker().await.as_ref().clone().unwrap().name(provider.name())));
 
         provider.terminate().await.unwrap();
         exit_err_rx.recv().await.unwrap();
 
-        let names = get_docker_by_name(provider.docker().await.as_ref().clone().unwrap().name(provider.name().await)).unwrap();
+        let names = get_docker_by_name(provider.docker().await.as_ref().clone().unwrap().name(provider.name())).unwrap();
         assert!(names.eq(""));
 
         // check log content
@@ -152,7 +152,7 @@ sleep 30
 
         provider.docker().await.as_ref().clone().unwrap()
             .post_exec(provider.context().await,
-                       provider.name().await).await
+                       provider.name()).await
             .unwrap();
     }
 

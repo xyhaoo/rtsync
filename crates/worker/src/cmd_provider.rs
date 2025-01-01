@@ -27,7 +27,7 @@ use crate::hooks::{HookType, JobHook};
 use crate::runner::{err_process_not_started, CmdJob};
 use async_trait::async_trait;
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub(crate) struct CmdConfig{
     pub(crate) name: String,
 
@@ -46,7 +46,7 @@ pub(crate) struct CmdConfig{
     pub(crate) size_pattern: String,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Debug)]
 pub(crate) struct CmdProvider{
     pub(crate) base_provider: Arc<RwLock<BaseProvider>>,
     pub(crate) cmd_config: Arc<CmdConfig>,
@@ -91,7 +91,7 @@ impl CmdProvider{
         //     return Err("未检测到命令".into())
         // }
 
-        
+
         // println!("debug: provider.cmd: {:?}", cmd);
         provider.command = Arc::from(cmd);
         if c.fail_on_match.len() > 0{
@@ -223,8 +223,8 @@ impl CmdProvider{
 
 #[async_trait]
 impl MirrorProvider for CmdProvider{
-    async fn name(&self) -> String {
-        self.base_provider.read().await.name()
+    fn name(&self) -> String {
+        self.cmd_config.name.clone()
     }
 
     fn upstream(&self) -> String {
@@ -256,7 +256,7 @@ impl MirrorProvider for CmdProvider{
             // 正常退出
             _ => {}
         }
-        
+
         if let Some(fail_on_match) = self.fail_on_match.as_ref(){
             match find_all_submatches_in_file(&*self.log_file().await, fail_on_match){
                 Ok(sub_matches) => {

@@ -71,7 +71,7 @@ mod tests{
         let provider = RsyncProvider::new(c.clone()).await.unwrap();
 
         assert_eq!(provider.r#type(), ProviderEnum::Rsync);
-        assert_eq!(provider.name().await, c.name);
+        assert_eq!(provider.name(), c.name);
         assert_eq!(provider.working_dir().await, c.working_dir);
         assert_eq!(provider.log_dir().await, c.log_dir);
         assert_eq!(provider.log_file().await, c.log_file);
@@ -199,7 +199,7 @@ exit 0
             ..Default::default()
         };
         let mut provider = RsyncProvider::new(c.clone()).await.unwrap();
-        assert_eq!(provider.name().await, c.name);
+        assert_eq!(provider.name(), c.name);
         assert_eq!(provider.working_dir().await, c.working_dir);
         assert_eq!(provider.log_dir().await, c.log_dir);
         assert_eq!(provider.log_file().await, c.log_file);
@@ -284,7 +284,7 @@ exit 0
             ..Default::default()
         };
         let mut provider = RsyncProvider::new(c.clone()).await.unwrap();
-        assert_eq!(provider.name().await, c.name);
+        assert_eq!(provider.name(), c.name);
         assert_eq!(provider.working_dir().await, c.working_dir);
         assert_eq!(provider.log_dir().await, c.log_dir);
         assert_eq!(provider.log_file().await, c.log_file);
@@ -380,13 +380,13 @@ done
         
         let mut provider = new_mirror_provider(c.clone(), g).await;
         assert_eq!(provider.r#type(), ProviderEnum::Rsync);
-        assert_eq!(provider.name().await, c.name.unwrap());
+        assert_eq!(provider.name(), c.name.unwrap());
         assert_eq!(provider.working_dir().await, c.mirror_dir.unwrap());
         assert_eq!(provider.log_dir().await, c.log_dir.unwrap());
 
 
 
-        let provider_name = provider.name().await;
+        let provider_name = provider.name();
         let log_dir = provider.log_dir().await;
         let log_file = provider.log_file().await;
         let working_dir = provider.working_dir().await;
@@ -435,7 +435,7 @@ done
         };
         let provider = CmdProvider::new(c.clone()).await.unwrap();
         assert_eq!(provider.r#type(), ProviderEnum::Command);
-        assert_eq!(provider.name().await, c.name);
+        assert_eq!(provider.name(), c.name);
         assert_eq!(provider.working_dir().await, c.working_dir);
         assert_eq!(provider.log_dir().await, c.log_dir);
         assert_eq!(provider.log_file().await, c.log_file);
@@ -462,7 +462,7 @@ echo $AOSP_REPO_BIN
 
         let expected_output = format!("{}\n{}\n{}\n{}\n{}\n",
                                       provider.working_dir().await,
-                                      provider.name().await,
+                                      provider.name(),
                                       provider.cmd_config.upstream_url, provider.log_file().await,
                                       "/usr/local/bin/repo");
 
@@ -645,7 +645,7 @@ sleep 10
 
         let mut provider = TwoStageRsyncProvider::new(c.clone()).await.unwrap();
         assert_eq!(provider.r#type(), ProviderEnum::TwoStageRsync);
-        assert_eq!(provider.name().await, c.name);
+        assert_eq!(provider.name(), c.name);
         assert_eq!(provider.working_dir().await, c.working_dir);
         assert_eq!(provider.log_dir().await, c.log_dir);
         assert_eq!(provider.log_file().await, c.log_file);

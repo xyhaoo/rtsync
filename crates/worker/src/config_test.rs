@@ -304,10 +304,10 @@ use_ipv6 = true
         let mut providers: HashMap<String, Box<dyn MirrorProvider>> = HashMap::new();
         for m in &cfg.mirrors {
             let p = new_mirror_provider(m.clone(), cfg.clone()).await;
-            providers.insert(p.name().await, p);
+            providers.insert(p.name(), p);
         }
         let p = providers.get("AOSP").unwrap();
-        assert_eq!(p.name().await, "AOSP".to_string());
+        assert_eq!(p.name(), "AOSP".to_string());
         assert_eq!(p.log_dir().await, "/var/log/rtsync/AOSP".to_string());
         assert_eq!(p.log_file().await, "/var/log/rtsync/AOSP/latest.log".to_string());
 
@@ -318,14 +318,14 @@ use_ipv6 = true
         assert!(display.contains(r#""bash", "-c", "echo ${RTSYNC_JOB_EXIT_STATUS} > ${RTSYNC_WORKING_DIR}/exit_status""#));
 
         let p = providers.get("debian").unwrap();
-        assert_eq!(p.name().await, "debian".to_string());
+        assert_eq!(p.name(), "debian".to_string());
         assert_eq!(p.log_dir().await, "/var/log/rtsync/debian".to_string());
         assert_eq!(p.log_file().await, "/var/log/rtsync/debian/latest.log".to_string());
         assert_eq!(p.r#type(), TwoStageRsync);
         assert_eq!(p.working_dir().await, "/data/mirrors/debian");
 
         let p = providers.get("fedora").unwrap();
-        assert_eq!(p.name().await, "fedora".to_string());
+        assert_eq!(p.name(), "fedora".to_string());
         assert_eq!(p.log_dir().await, "/var/log/rtsync/fedora".to_string());
         assert_eq!(p.log_file().await, "/var/log/rtsync/fedora/latest.log".to_string());
         assert_eq!(p.r#type(), Rsync);
@@ -394,24 +394,24 @@ use_ipv6 = true
         let mut providers: HashMap<String, Box<dyn MirrorProvider>> = HashMap::new();
         for m in &cfg.mirrors {
             let p = new_mirror_provider(m.clone(), cfg.clone()).await;
-            providers.insert(p.name().await, p);
+            providers.insert(p.name(), p);
         }
         let p = providers.get("debian-security").unwrap();
-        assert_eq!(p.name().await, "debian-security".to_string());
+        assert_eq!(p.name(), "debian-security".to_string());
         assert_eq!(p.log_dir().await, "/var/log/rtsync/debian-security");
         assert_eq!(p.log_file().await, "/var/log/rtsync/debian-security/latest.log");
         assert_eq!(p.r#type(), TwoStageRsync);
         assert_eq!(p.working_dir().await, "/data/mirrors/debian/debian-security");
 
         let p = providers.get("ubuntu").unwrap();
-        assert_eq!(p.name().await, "ubuntu".to_string());
+        assert_eq!(p.name(), "ubuntu".to_string());
         assert_eq!(p.log_dir().await, "/var/log/rtsync/ubuntu");
         assert_eq!(p.log_file().await, "/var/log/rtsync/ubuntu/latest.log");
         assert_eq!(p.r#type(), TwoStageRsync);
         assert_eq!(p.working_dir().await, "/data/mirrors/debian/ubuntu");
 
         let p = providers.get("debian-cd").unwrap();
-        assert_eq!(p.name().await, "debian-cd".to_string());
+        assert_eq!(p.name(), "debian-cd".to_string());
         assert_eq!(p.log_dir().await, "/var/log/rtsync/debian-cd");
         assert_eq!(p.log_file().await, "/var/log/rtsync/debian-cd/latest.log");
         assert_eq!(p.r#type(), Rsync);
