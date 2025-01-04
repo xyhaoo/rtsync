@@ -1,3 +1,4 @@
+use std::fmt::{Display, Formatter};
 use anyhow::{anyhow, Result};
 use std::future::Future;
 use std::pin::Pin;
@@ -32,14 +33,14 @@ pub(crate) enum JobCtrlAction {
 #[derive(Debug)]
 pub(crate) struct JobMessage {
     pub(crate) status: SyncStatus,
-    name: String,
+    pub(crate) name: String,
     pub(crate) msg: String,
     pub(crate) schedule: bool,
 }
 
-// Worker状态枚举
+// Job状态枚举
 #[derive(Clone, Copy, PartialEq)]
-pub(crate) enum WorkerState {
+pub(crate) enum JobState {
     None = 0,      // 空状态
     Ready = 1,     // 准备运行,可调度
     Paused = 2,    // 被jobStop暂停
@@ -47,14 +48,20 @@ pub(crate) enum WorkerState {
     Halting = 4,   // worker正在停止
 }
 
-impl WorkerState {
+impl Display for JobState {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "JobState::{}", self)
+    }
+}
+
+impl JobState {
     fn from_u32(val: u32) -> Option<Self> {
         match val {
-            0 => Some(WorkerState::None),
-            1 => Some(WorkerState::Ready),
-            2 => Some(WorkerState::Paused),
-            3 => Some(WorkerState::Disabled),
-            4 => Some(WorkerState::Halting),
+            0 => Some(JobState::None),
+            1 => Some(JobState::Ready),
+            2 => Some(JobState::Paused),
+            3 => Some(JobState::Disabled),
+            4 => Some(JobState::Halting),
             _ => None
         }
     }
@@ -92,7 +99,7 @@ pub struct MirrorJob {
     disabled_tx: Arc<Mutex<Option<Sender<Empty>>>>,
     pub(crate) disabled_rx: Arc<Mutex<Option<Receiver<Empty>>>>,
     state: Arc<AtomicU32>,
-    size: Arc<Mutex<String>>,
+    pub(crate) size: Arc<Mutex<String>>,
 }
 impl PartialEq for MirrorJob {
     fn eq(&self, other: &Self) -> bool {
@@ -109,7 +116,7 @@ impl MirrorJob {
             ctrl_chan_rx: Arc::new(Mutex::new(rx)),
             disabled_tx: Arc::new(Mutex::new(None)),
             disabled_rx: Arc::new(Mutex::new(None)),
-            state: Arc::new(AtomicU32::new(WorkerState::None as u32)),
+            state: Arc::new(AtomicU32::new(JobState::None as u32)),
             size: Arc::new(Mutex::new(String::new())),
         }
     }
@@ -118,17 +125,25 @@ impl MirrorJob {
         self.provider.name()
     }
 
-    pub fn state(&self) -> u32 {
-        self.state.load(Ordering::SeqCst)
+    pub fn state(&self) -> JobState {
+        let state = self.state.load(Ordering::SeqCst);
+        match state {
+            0 => JobState::None,
+            1 => JobState::Ready,
+            2 => JobState::Paused,
+            3 => JobState::Disabled,
+            4 => JobState::Halting,
+            _ => unreachable!()
+        }
     }
 
-    pub fn set_state(&self, state: u32) {
-        self.state.store(state, Ordering::SeqCst);
+    pub fn set_state(&self, state: JobState) {
+        self.state.store(state as u32, Ordering::SeqCst);
     }
 
     pub fn set_provider(&mut self, provider: Box<dyn MirrorProvider>) -> Result<()> {
         let s = self.state();
-        if s != WorkerState::None as u32 && s != WorkerState::Disabled as u32 {
+        if s != JobState::None && s != JobState::Disabled {
             return Err(anyhow!(format!("Provider cannot be switched when job state is {}", s)));
         }
         self.provider = Arc::new(provider);
@@ -354,7 +369,7 @@ impl MirrorJob {
                     status: SyncStatus::Success,
                     name: self.name(),
                     msg: String::new(),
-                    schedule: self.state() == WorkerState::Ready as u32,
+                    schedule: self.state() == JobState::Ready,
                 }).await?;
                 return Ok(());
             } else {
@@ -368,7 +383,7 @@ impl MirrorJob {
                     status: SyncStatus::Failed,
                     name: self.name(),
                     msg: sync_err.err().unwrap().to_string(),
-                    schedule: (retry == self.provider.retry().await - 1) && (self.state() == WorkerState::Ready as u32),
+                    schedule: (retry == self.provider.retry().await - 1) && (self.state() == JobState::Ready),
                 }).await?;
 
                 //
@@ -443,9 +458,9 @@ impl MirrorJob {
         
         // 一次同步的整个流程
         'whole_syncing: loop {
-            // 刚被初始化的MirrorJob此时的状态是WorkerState::None
+            // 刚被初始化的MirrorJob此时的状态是JobState::None
             // 它等待接收从ctrl_chan发送的状态信号来选择接下来的动作
-            if self.state() == WorkerState::Ready as u32 {
+            if self.state() == JobState::Ready {
                 // kill的发送端是否被丢弃，决定任务是否被强制结束，当任务被强制结束，接收端接收到None
                 // 如果任务开始后马上被结束，会在run_job中收到None，如果在同步中结束，会在run_job_wrapper中收到None
                 let (kill_tx, kill_rx) = mpsc::channel(1);
@@ -482,20 +497,20 @@ impl MirrorJob {
                         Some(ctrl) = ctrl_lock.recv() => {
                             match ctrl {
                                 JobCtrlAction::Stop => {
-                                    self.set_state(WorkerState::Paused as u32);
+                                    self.set_state(JobState::Paused);
                                     drop(kill_tx);
                                     // 阻塞，等待已运行的同步工作结束
                                     let _ = job_done_rx.recv().await;
                                     break 'wait_for_job;
                                 }
                                 JobCtrlAction::Disable => {
-                                    self.set_state(WorkerState::Disabled as u32);
+                                    self.set_state(JobState::Disabled);
                                     drop(kill_tx);
                                     let _ = job_done_rx.recv().await;
                                     return Ok(());
                                 }
                                 JobCtrlAction::Restart => {
-                                    self.set_state(WorkerState::Ready as u32);
+                                    self.set_state(JobState::Ready);
                                     drop(kill_tx);
                                     let _ = job_done_rx.recv().await;
                                     // 等待 1 秒，防止重启时任务还未完全退出。
@@ -504,15 +519,15 @@ impl MirrorJob {
                                 }
                                 JobCtrlAction::ForceStart => {
                                     let _ = bypass_semaphore_tx.try_send(());
-                                    self.set_state(WorkerState::Ready as u32);
+                                    self.set_state(JobState::Ready);
                                     continue 'wait_for_job;
                                 }
                                 JobCtrlAction::Start => {
-                                    self.set_state(WorkerState::Ready as u32);
+                                    self.set_state(JobState::Ready);
                                     continue 'wait_for_job;
                                 }
                                 JobCtrlAction::Halt => {
-                                    self.set_state(WorkerState::Halting as u32);
+                                    self.set_state(JobState::Halting);
                                     drop(kill_tx);
                                     let _ = job_done_rx.recv().await;
                                     return Ok(());
@@ -531,19 +546,19 @@ impl MirrorJob {
             if let Some(ctrl) = self.ctrl_chan_rx.lock().await.recv().await {
                 match ctrl {
                     JobCtrlAction::Stop => {
-                        self.set_state(WorkerState::Paused as u32);
+                        self.set_state(JobState::Paused);
                     }
                     JobCtrlAction::Disable => {
-                        self.set_state(WorkerState::Disabled as u32);
+                        self.set_state(JobState::Disabled);
                         return Ok(());
                     }
                     JobCtrlAction::ForceStart => {
                         //non-blocking
                         let _ = bypass_semaphore_tx.try_send(());
-                        self.set_state(WorkerState::Ready as u32);
+                        self.set_state(JobState::Ready);
                     }
                     JobCtrlAction::Restart | JobCtrlAction::Start => {
-                        self.set_state(WorkerState::Ready as u32);
+                        self.set_state(JobState::Ready);
                     }
                     _ => return Ok(()),
                 }

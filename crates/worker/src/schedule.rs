@@ -1,15 +1,16 @@
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::Arc;
+use tokio::sync::{Mutex, MutexGuard};
 use chrono::{DateTime, Utc};
 use skiplist::skipmap::SkipMap;
 use log::{debug, warn};
 use crate::job::MirrorJob;
 // jobs的调度队列
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ScheduleQueue {
-    list: Arc<Mutex<SkipMap<DateTime<Utc>, MirrorJob>>>,
-    jobs: Arc<Mutex<HashMap<String, bool>>>,
+    pub(crate) list: Arc<Mutex<SkipMap<DateTime<Utc>, MirrorJob>>>,
+    pub(crate) jobs: Arc<Mutex<HashMap<String, bool>>>,
 }
 
 pub struct JobScheduleInfo {
@@ -29,7 +30,7 @@ impl ScheduleQueue {
 
     pub async fn get_jobs(&self) -> Vec<JobScheduleInfo> {
         let mut jobs = Vec::new();
-        let list = self.list.lock().unwrap();
+        let list = self.list.lock().await;
 
         for (sched_time, job) in list.iter() {
             jobs.push(JobScheduleInfo {
@@ -40,9 +41,9 @@ impl ScheduleQueue {
         jobs
     }
 
-    pub fn add_job(&self, sched_time: DateTime<Utc>, job: MirrorJob) {
-        let mut jobs = self.jobs.lock().unwrap();
-        let mut list = self.list.lock().unwrap();
+    pub async fn add_job(&self, sched_time: DateTime<Utc>, job: MirrorJob) {
+        let mut jobs = self.jobs.lock().await;
+        let mut list = self.list.lock().await;
         
         let job_name = job.name();
 
@@ -58,15 +59,15 @@ impl ScheduleQueue {
         debug!("添加了 job {} @ {:?}", job_name, sched_time);
     }
 
-    pub fn pop(&self) -> Option<MirrorJob> {
-        let mut list = self.list.lock().unwrap();
+    pub async fn pop(&self) -> Option<MirrorJob> {
+        let mut list = self.list.lock().await;
         
         if let Some((sched_time, job)) = list.front() {
             let sched_time = *sched_time;
             let job_name = job.name();
             if sched_time < Utc::now() {
                 let ret = list.pop_front().unwrap();
-                self.jobs.lock().unwrap().remove(&job_name);
+                self.jobs.lock().await.remove(&job_name);
                 debug!("移出 job {} @ {:?}", job_name, sched_time);
                 return Some(ret.1);
             }
@@ -103,10 +104,10 @@ mod tests {
     use internal::logger::init_logger;
     use crate::cmd_provider::{CmdConfig, CmdProvider};
 
-    #[test]
-    fn test_popping_on_empty_schedule() {
+    #[tokio::test]
+    async fn test_popping_on_empty_schedule() {
         let schedule = ScheduleQueue::new();
-        let job = schedule.pop();
+        let job = schedule.pop().await;
         assert!(job.is_none());
     }
     #[tokio::test]
@@ -120,10 +121,10 @@ mod tests {
         let job = MirrorJob::new(Box::new(provider));
         let sched = Utc::now() + Duration::seconds(1);
         
-        schedule.add_job(sched, job.clone());
-        assert!(schedule.pop().is_none());
+        schedule.add_job(sched, job.clone()).await;
+        assert!(schedule.pop().await.is_none());
         tokio::time::sleep(core::time::Duration::from_millis(1200)).await;
-        assert_eq!(schedule.pop().unwrap(), job);
+        assert_eq!(schedule.pop().await.unwrap(), job);
     }
     
     #[tokio::test]
@@ -139,14 +140,14 @@ mod tests {
         let job = MirrorJob::new(Box::new(provider));
         let sched = Utc::now() + Duration::seconds(1);
         
-        schedule.add_job(sched, job.clone());
-        schedule.add_job(sched + Duration::seconds(1), job.clone());
+        schedule.add_job(sched, job.clone()).await;
+        schedule.add_job(sched + Duration::seconds(1), job.clone()).await;
         
-        assert!(schedule.pop().is_none());
+        assert!(schedule.pop().await.is_none());
         tokio::time::sleep(core::time::Duration::from_millis(1200)).await;
-        assert!(schedule.pop().is_none());
+        assert!(schedule.pop().await.is_none());
         tokio::time::sleep(core::time::Duration::from_millis(1200)).await;
-        assert_eq!(schedule.pop().unwrap(), job);
+        assert_eq!(schedule.pop().await.unwrap(), job);
         
     }
     
@@ -161,13 +162,13 @@ mod tests {
         let job = MirrorJob::new(Box::new(provider));
         let sched = Utc::now() + Duration::seconds(1);
     
-        schedule.add_job(sched, job.clone());
-        let mut list_lock = schedule.list.lock().unwrap();
-        let mut jobs_lock = schedule.jobs.lock().unwrap();
+        schedule.add_job(sched, job.clone()).await;
+        let mut list_lock = schedule.list.lock().await;
+        let mut jobs_lock = schedule.jobs.lock().await;
         assert_eq!(schedule.remove("something", &mut list_lock, &mut jobs_lock), false);
         assert_eq!(schedule.remove("schedule_test", &mut list_lock, &mut jobs_lock), true);
         drop((list_lock, jobs_lock));
         tokio::time::sleep(core::time::Duration::from_millis(1200)).await;
-        assert!(schedule.pop().is_none());
+        assert!(schedule.pop().await.is_none());
     }
 }

@@ -69,13 +69,13 @@ pub(crate) struct GlobalConfig {
 pub(crate) struct ManagerConfig{
     pub(crate) api_base: Option<String>,
     //该选项覆盖APIBase
-    api_list: Option<Vec<String>>,
-    ca_cert: Option<String>,
+    pub(crate) api_list: Option<Vec<String>>,
+    pub(crate) ca_cert: Option<String>,
     // token: Option<String>,
 }
 impl ManagerConfig {
     //获取api_list，如果为空，就获取api_base，将其放入vec中返回
-    fn api_base_list(&self) -> Vec<String> {
+    pub(crate) fn api_base_list(&self) -> Vec<String> {
         if let Some(apis) = &self.api_list {
             // 如果 api_list 不为空，直接返回它的克隆
             apis.clone()
@@ -92,10 +92,10 @@ impl ManagerConfig {
 #[serde(default)]
 pub(crate) struct ServerConfig {
     pub(crate) hostname: Option<String>,
-    listen_addr: Option<String>,
-    listen_port: Option<usize>,
-    ssl_cert: Option<String>,
-    ssl_key: Option<String>,
+    pub(crate) listen_addr: Option<String>,
+    pub(crate) listen_port: Option<usize>,
+    pub(crate) ssl_cert: Option<String>,
+    pub(crate) ssl_key: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]

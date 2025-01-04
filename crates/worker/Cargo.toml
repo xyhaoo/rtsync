@@ -35,3 +35,6 @@ tokio = "1.41.1"
 scopeguard = "1.2"
 async-trait = "0.1.83"
 anyhow = "1.0.95"
+rocket = { version = "0.5.1", features = ["json", "tls"] }
+reqwest = "0.12.9"
+

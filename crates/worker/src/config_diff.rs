@@ -38,21 +38,23 @@ impl From<MirrorConfig> for SortableMirrorConfig {
     }
 }
 
-
-const DIFF_DELETE: u8 = 0;
-const DIFF_ADD: u8 = 1;
-const DIFF_MODIFY: u8 = 2;
+#[derive(Eq, PartialEq)]
+pub(crate) enum Diff{
+    Delete = 0,
+    Add = 1,
+    Modify = 2,
+}
 
 // 镜像配置差异单元
-struct MirrorCfgTrans{
-    diff_op: u8,
-    mir_cfg: MirrorConfig
+pub(crate) struct MirrorCfgTrans{
+    pub(crate) diff_op: Diff,
+    pub(crate) mir_cfg: MirrorConfig
 }
 
 impl MirrorCfgTrans {
     fn string(&self) -> String{
         let op = match self.diff_op {
-            DIFF_DELETE => "del".to_string(),
+            Diff::Delete => "del".to_string(),
             _ => "add".to_string(),
         };
         format!("{{{}, {}}}", op, self.mir_cfg.name.clone().unwrap_or_default())
@@ -62,7 +64,7 @@ impl MirrorCfgTrans {
 // diff_mirror_config查找old_list和new_list之间的差异
 // 它返回一系列操作
 // 如果这些操作应用于old_list，则可以获得new_list等价。
-fn diff_mirror_config(old_list: &Vec<MirrorConfig>, new_list: &Vec<MirrorConfig>) -> Vec<MirrorCfgTrans>{
+pub(crate) fn diff_mirror_config(old_list: &Vec<MirrorConfig>, new_list: &Vec<MirrorConfig>) -> Vec<MirrorCfgTrans>{
     let mut operations: Vec<MirrorCfgTrans> = vec![];
     let mut o_list: Vec<SortableMirrorConfig> = Vec::with_capacity(old_list.len());
     let mut n_list: Vec<SortableMirrorConfig> = Vec::with_capacity(new_list.len());
@@ -89,7 +91,7 @@ fn diff_mirror_config(old_list: &Vec<MirrorConfig>, new_list: &Vec<MirrorConfig>
             ..Default::default()
         };
         if nil.name.clone().unwrap() <= max_name{
-            panic!("Nil.Name应该比maxName大");
+            panic!("nil.name应该比max_name大");
         }
         o_list.push(SortableMirrorConfig(nil.clone()));
         n_list.push(SortableMirrorConfig(nil));
@@ -99,14 +101,14 @@ fn diff_mirror_config(old_list: &Vec<MirrorConfig>, new_list: &Vec<MirrorConfig>
         while  i<o_list.len() && j<n_list.len(){
             let (o, n) = (o_list[i].clone(), n_list[j].clone());
             if n.0.name < o.0.name{
-                operations.push(MirrorCfgTrans{diff_op: DIFF_ADD, mir_cfg: n.0.clone()});
+                operations.push(MirrorCfgTrans{diff_op: Diff::Add, mir_cfg: n.0.clone()});
                 j+=1;
             }else if o.0.name < n.0.name{
-                operations.push(MirrorCfgTrans{diff_op: DIFF_DELETE, mir_cfg: o.0.clone()});
+                operations.push(MirrorCfgTrans{diff_op: Diff::Delete, mir_cfg: o.0.clone()});
                 i+=1;
             }else {
                 if !o.deep_eq(&n) {
-                    operations.push(MirrorCfgTrans{diff_op: DIFF_MODIFY, mir_cfg: n.0.clone()});
+                    operations.push(MirrorCfgTrans{diff_op: Diff::Modify, mir_cfg: n.0.clone()});
                 }
                 i+=1;
                 j+=1;
@@ -114,10 +116,10 @@ fn diff_mirror_config(old_list: &Vec<MirrorConfig>, new_list: &Vec<MirrorConfig>
         }
     }else {
         for i in 0..o_list.len(){
-            operations.push(MirrorCfgTrans{diff_op: DIFF_DELETE, mir_cfg: o_list[i].0.clone()})
+            operations.push(MirrorCfgTrans{diff_op: Diff::Delete, mir_cfg: o_list[i].0.clone()})
         }
         for i in 0..n_list.len(){
-            operations.push(MirrorCfgTrans{diff_op: DIFF_ADD, mir_cfg: n_list[i].0.clone()})
+            operations.push(MirrorCfgTrans{diff_op: Diff::Add, mir_cfg: n_list[i].0.clone()})
         }
     }
     operations
@@ -126,7 +128,6 @@ fn diff_mirror_config(old_list: &Vec<MirrorConfig>, new_list: &Vec<MirrorConfig>
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
     use super::*;
     #[test]
     fn test_equal_configs(){
@@ -171,6 +172,8 @@ mod tests {
         let difference = diff_mirror_config(&old_list, &new_list);
         assert_eq!(difference.len(), old_list.len());
     }
+    
+
     #[test]
     fn test_diff_list_name(){
         let old_list = vec![
@@ -204,7 +207,7 @@ mod tests {
         for o in old_list.iter(){
             let mut keep = true;
             for op in difference.iter(){
-                if (op.diff_op == DIFF_DELETE || op.diff_op == DIFF_MODIFY) && 
+                if (op.diff_op == Diff::Delete || op.diff_op == Diff::Modify) && 
                     op.mir_cfg.name.as_ref().unwrap_or(&String::new()) == o.0.name.as_ref().unwrap_or(&String::new()){
                     keep = false;
                     break
@@ -216,7 +219,7 @@ mod tests {
         }
         
         for op in difference.iter(){
-            if op.diff_op == DIFF_ADD || op.diff_op == DIFF_MODIFY {
+            if op.diff_op == Diff::Add || op.diff_op == Diff::Modify {
                 empty_list.push(op.mir_cfg.clone());
             }
         }

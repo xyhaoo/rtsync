@@ -29,5 +29,6 @@ mod zfs_hook_test;
 mod cgroup_test;
 mod job_test;
 mod loglimit_test;
+mod worker_test;
 
 
