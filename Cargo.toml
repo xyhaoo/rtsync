@@ -12,31 +12,53 @@ rust-version = "1.82.0"
 [[bin]]
 bench = false
 name = "rtsync"
-path = "crates/core/main.rs"
+path = "crates/core/cmd/rtsync/rtsync.rs"
+
+[[bin]]
+bench = false
+name = "rtsynctl"
+path = "crates/core/cmd/rtsynctl/rtsynctl.rs"
+
+[[bin]]
+bench = false
+name = "rtsync_autocomplete"
+path = "crates/core/cmd/rtsync/build.rs"
+
+[[bin]]
+bench = false
+name = "rtsynctl_autocomplete"
+path = "crates/core/cmd/rtsynctl/build.rs"
 
 [workspace]
 members = [
     "crates/internal", 
     "crates/manager", 
     "crates/worker", 
-    
-    
+
     
 #    "tests/http_test",
 ]
 
 [dependencies]
+serde = { version = "1.0.211", features = ["derive"] }
+serde_json = "1.0.132"
+toml = "0.8.19"
+lazy_static = "1.5.0"
+reqwest = "0.12.9"
 clap = { version = "4.5.20", features = ["derive"] }
+clap_complete = "4.5.40"
 log = "0.4.22"
-env_logger = "0.11.5"
 tokio = { version = "1.41.1", features = ["full"]}
-
-
-
-
-
-
+anyhow = "1.0.95"
+rocket = { version = "0.5.1", features = ["json", "tls"] }
+pprof = { version = "0.14.0", features = ["_protobuf", "protobuf", "prost-codec"]}
+scopeguard = "1.2"
 internal = {path = "./crates/internal"}
+manager = {path = "./crates/manager"}
+worker = {path = "./crates/worker"}
+tera = "1.20.0"
 
-
+[build-dependencies]
+clap = "*"
+clap_complete = "*"
 

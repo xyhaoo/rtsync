@@ -1,9 +1,10 @@
 use std::cell::{Ref, RefCell};
 use std::str::FromStr;
+use anyhow::Result;
 // use cgroups_rs::Cgroup;
 
 #[derive(Debug)]
-enum ConfigError {
+pub(crate) enum ConfigError {
     IoError(std::io::Error),
     TomlError(toml::de::Error),
     // Add other error types as needed
@@ -35,7 +36,7 @@ where
 //Config代表worker配置选项
 #[derive(Debug, Default, Deserialize, Clone)]
 #[serde(default)]
-pub(crate) struct Config {
+pub struct Config {
     pub(crate) global: GlobalConfig,
     pub(crate) manager: ManagerConfig,
     pub(crate) server: ServerConfig,
@@ -46,7 +47,7 @@ pub(crate) struct Config {
     pub(crate) include: IncludeConfig,
     #[serde(rename = "mirrors")]
     pub(crate) mirrors_config: Vec<MirrorConfig>,
-    pub(crate) mirrors: Vec<MirrorConfig>,
+    pub mirrors: Vec<MirrorConfig>,
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]
@@ -139,7 +140,7 @@ pub struct DockerConfig {
 
 #[derive(Debug, Default, Deserialize, Clone)]
 #[serde(default)]
-struct IncludeConfig {
+pub(crate) struct IncludeConfig {
     include_mirrors: Option<String>,
 }
 
@@ -224,7 +225,7 @@ use serde::Deserialize;
 use merge::Merge;
 #[derive(Debug, Deserialize, Default, Clone, Eq, PartialEq)]
 #[serde(default)]
-pub(crate) struct MirrorConfig {
+pub struct MirrorConfig {
     pub(crate) name: Option<String>,
     #[serde(deserialize_with = "deserialize_provider_enum")]
     pub(crate) provider: Option<ProviderEnum>,
@@ -317,15 +318,11 @@ impl MirrorConfig {
 
 use glob::glob;
 // load_config加载配置
-pub(crate) fn load_config(cfg_file: Option<&str>) -> Result<Config, Box<dyn std::error::Error>> {
-    let mut cfg = Config::default();
-
+pub fn load_config(cfg_file: &str) -> Result<Config> {
     // 使用配置文件初始化Config实例
-    if let Some(file) = cfg_file {
-        // fs::metadata(file)?;  // 检查配置文件是否存在
-        let config_contents = fs::read_to_string(file)?;
-        cfg = toml::de::from_str(&config_contents)?;
-    }
+    // fs::metadata(file)?;  // 检查配置文件是否存在
+    let config_contents = fs::read_to_string(cfg_file)?;
+    let mut cfg: Config = toml::de::from_str(&config_contents)?;
 
     // 如果有下层镜像，提取其文件所在位置，解析并插入cfg
     let include_mirrors = cfg.include.include_mirrors.clone();
@@ -347,7 +344,7 @@ pub(crate) fn load_config(cfg_file: Option<&str>) -> Result<Config, Box<dyn std:
 }
 
 // 依据mirror_config配置cfg的mirror字段
-fn recursive_mirrors(cfg: &mut Config, parent: Rc<RefCell<Option<MirrorConfig>>>, mirror: MirrorConfig) -> Result<(), Box<dyn std::error::Error>> {
+fn recursive_mirrors(cfg: &mut Config, parent: Rc<RefCell<Option<MirrorConfig>>>, mirror: MirrorConfig) -> Result<()> {
     let cur_mir = match &*parent.borrow() {
         Some(mirror_config) => parent.clone(),
         None => Rc::new(RefCell::new(Some(MirrorConfig::default()))),

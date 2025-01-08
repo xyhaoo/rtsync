@@ -71,7 +71,7 @@ mod tests {
     }
 
     async fn send_command_to_worker(worker_url: &str,
-                              http_client: Arc<Option<reqwest::Client>>,
+                              http_client: reqwest::Client,
                               cmd: CmdVerb,
                               mirror_id: String)
     {
@@ -82,7 +82,7 @@ mod tests {
             options: Default::default(),
         };
         debug!("POST to {} with cmd {}", worker_url, cmd);
-        assert!(post_json(worker_url, &worker_cmd, http_client).await.is_ok());
+        assert!(post_json(worker_url, &worker_cmd, Some(http_client)).await.is_ok());
     }
 
 
@@ -104,7 +104,6 @@ mod tests {
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
         let http_client = create_http_client(None).unwrap();
-        let http_client = Arc::new(Some(http_client));
 
         let worker_port = WORKER_PORT + 1;
 
@@ -136,7 +135,7 @@ mod tests {
         with_several_jobs(worker_cfg, http_client, recv_data_chan_rx).await
     }
 
-    async fn with_no_job(cfg: Config, http_client: Arc<Option<reqwest::Client>>, mut recv_data_chan_rx: Receiver<SendType>) {
+    async fn with_no_job(cfg: Config, http_client: reqwest::Client, mut recv_data_chan_rx: Receiver<SendType>) {
         let mut exited_chan = channel::<i32>(1);
         let mut w = Worker::new(cfg).await.unwrap();
         let w_clone = w.clone();
@@ -182,7 +181,7 @@ mod tests {
         }
     }
 
-    async fn with_one_job(mut cfg: Config, http_client: Arc<Option<reqwest::Client>>, mut recv_data_chan_rx: Receiver<SendType>){
+    async fn with_one_job(mut cfg: Config, http_client: reqwest::Client, mut recv_data_chan_rx: Receiver<SendType>){
         cfg.mirrors = vec![MirrorConfig{
             name: Some("job-ls".to_string()),
             provider: Some(ProviderEnum::Command),
@@ -252,7 +251,7 @@ mod tests {
         }
     }
     
-    async fn with_several_jobs(mut cfg: Config, http_client: Arc<Option<reqwest::Client>>, mut recv_data_chan_rx: Receiver<SendType>){
+    async fn with_several_jobs(mut cfg: Config, http_client: reqwest::Client, mut recv_data_chan_rx: Receiver<SendType>){
         cfg.mirrors = vec![
             MirrorConfig{
                 name: Some("job-ls-1".to_string()),

@@ -1,6 +1,6 @@
 extern crate core;
 
-mod config;
+pub mod config;
 mod provider;
 mod common;
 mod cgroup;
@@ -20,7 +20,7 @@ mod exec_post_hook;
 mod btrfs_snapshot_hook_nolinux;
 mod btrfs_snapshot_hook;
 mod job;
-mod worker;
+pub mod worker;
 mod config_test;
 mod provider_test;
 mod docker_test;

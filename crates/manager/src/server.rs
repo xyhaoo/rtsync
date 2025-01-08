@@ -30,12 +30,12 @@ pub(crate) enum Response{
 
 
 // 一个Manager代表一个manager服务器
-pub(crate) struct Manager{
+pub struct Manager{
     pub(crate) cfg: Config,
     pub(crate) engine: Rocket<Build>,
 }
 impl Manager {
-    pub(crate) fn run(mut self) -> Rocket<Build>{
+    pub async fn run(mut self){
         let mut figment = self.engine.figment().clone();
         if let (Some(addr), Some(port)) = (self.cfg.server.addr, self.cfg.server.port){
             figment = figment
@@ -49,13 +49,12 @@ impl Manager {
         }
         self.engine = self.engine.configure(figment);
         
-        self.engine
-        // self.engine.launch().await
+        self.engine.launch().await.unwrap();
     }
 
 }
 
-pub(crate) fn get_rtsync_manager(cfg: &Config) -> Result<Manager, String>{
+pub fn get_rtsync_manager(cfg: &Config) -> Result<Manager, String>{
     let mut s = Manager{
         cfg: cfg.clone(),
         engine: Rocket::build(),
@@ -416,7 +415,7 @@ async fn handle_client_cmd(client_cmd: Json<ClientCmd>, adapter: &State<Box<dyn 
 
     info!("对<{}>发送命令'{} {}'", client_cmd.worker_id, client_cmd.cmd, client_cmd.mirror_id);
     let http_client = client.inner().clone();
-    if let Err(e) = post_json(&worker_url, &worker_cmd, Arc::new(Some(http_client))).await{
+    if let Err(e) = post_json(&worker_url, &worker_cmd, Some(http_client)).await{
         let error = format!("为worker {}({}) 发送命令失败：{}", worker_id, worker_url, e.to_string());
         error!("{}", error);
         return (Status::InternalServerError, Json(Response::Error (error)))

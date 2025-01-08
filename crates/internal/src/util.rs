@@ -100,7 +100,7 @@ pub fn create_http_client(ca_file: Option<&str>) -> Result<Client, reqwest::Erro
 }
 
 // Post JSON data to a URL
-pub async fn post_json<T: Serialize + Send>(url: &str, obj: &T, client: Arc<Option<Client>>) -> Result<reqwest::Response, reqwest::Error> {
+pub async fn post_json<T: Serialize + Send>(url: &str, obj: &T, client: Option<Client>) -> Result<reqwest::Response, reqwest::Error> {
     let response = match client.as_ref() {
         Some(client) => {
             client
@@ -124,7 +124,7 @@ pub async fn post_json<T: Serialize + Send>(url: &str, obj: &T, client: Arc<Opti
 }
 
 // Get JSON response from a URL
-pub async fn get_json<T: for<'de> Deserialize<'de>>(url: &str, client: Arc<Option<Client>>) -> Result<T, reqwest::Error> {
+pub async fn get_json<T: for<'de> Deserialize<'de>>(url: &str, client: Option<Client>) -> Result<T, reqwest::Error> {
     match client.as_ref() {
         None => {
             let client = create_http_client(None)?;

@@ -65,27 +65,27 @@ impl WorkerManager{
 
 // Worker是rtsync worker的一个实例
 #[derive(Clone)]
-pub(crate) struct Worker {
+pub struct Worker {
     cfg: Arc<Mutex<Config>>,
     exit: (Option<Sender<()>>, Arc<Mutex<Receiver<()>>>),
     http_engine: Arc<Mutex<Option<Rocket<Build>>>>,
-    http_client: Arc<Option<Client>>,
+    http_client: Client,
     worker_manager: WorkerManager,  // 将要被manage到rocket的数据
 }
 
 
 impl Worker {
-    pub(crate) async fn new(mut cfg: Config) -> Option<Self> {
+    pub async fn new(mut cfg: Config) -> Option<Self> {
         if cfg.global.retry.is_none() || cfg.global.retry.is_some_and(|retry| retry == 0){
             cfg.global.retry = Some(DEFAULT_MAX_RETRY);
         }
-        let mut http_client = None;
+        let mut http_client = Client::new();
         let concurrent = cfg.global.concurrent.unwrap();
         if let Some(ca_cert) = cfg.manager.ca_cert.as_ref(){
             if !ca_cert.is_empty(){
                 match create_http_client(Some(ca_cert)){
                     Ok(client) => {
-                        http_client = Some(client);
+                        http_client = client;
                     }
                     Err(e) => {
                         error!("初始化http 客户端失败: {}", e);
@@ -101,14 +101,14 @@ impl Worker {
             cfg: Arc::new(Mutex::new(cfg)),
             exit: (tx, Arc::new(Mutex::new(rx))),
             http_engine: Arc::new(Mutex::new(Some(Self::make_http_server(worker_manager.clone())))),
-            http_client: Arc::new(http_client),
+            http_client,
             worker_manager,
         };
         w.init_jobs().await;
         Some(w)
     }
 
-    pub(crate) async fn run(&self) {
+    pub async fn run(&self) {
         self.register_worker().await;
         let rocket = self.run_http_server().await;
         // 现在Worker里的服务器被取出，放入异步运行时运行， self.http_engine == None
@@ -118,7 +118,7 @@ impl Worker {
         self.run_schedule().await;
     }
 
-    pub(crate) async fn halt(&mut self) {
+    pub async fn halt(&mut self) {
         let jobs_lock = self.worker_manager.jobs.write().await;
         info!("Stopping all the jobs");
         for job in jobs_lock.values() {
@@ -134,7 +134,7 @@ impl Worker {
     // ReloadMirrorConfig refresh the providers and jobs
     // from new mirror configs
     // TODO: deleted job should be removed from manager-side mirror list
-    async fn reload_mirror_config(&self, new_mirrors: Vec<MirrorConfig>) {
+    pub async fn reload_mirror_config(&self, new_mirrors: Vec<MirrorConfig>) {
         let mut jobs_lock = self.worker_manager.jobs.write().await;
         info!("Reloading mirror configs");
 
@@ -241,10 +241,10 @@ impl Worker {
         drop((cfg_lock, cfg));
     }
 
-    async fn disable_job(&self, 
-                         job: &MirrorJob, 
+    async fn disable_job(&self,
+                         job: &MirrorJob,
                          list_lock: &mut MutexGuard<'_, SkipMap<DateTime<Utc>, MirrorJob>>,
-                         jobs_lock: &mut MutexGuard<'_, HashMap<String, bool>>) 
+                         jobs_lock: &mut MutexGuard<'_, HashMap<String, bool>>)
     {
         self.worker_manager.disable_job(job, list_lock, jobs_lock).await;
     }
@@ -332,7 +332,7 @@ impl Worker {
             });
             self.worker_manager.schedule.add_job(Utc::now(), job.clone()).await;
         }
-        
+
         drop(jobs_lock);
 
         let sched_info = self.worker_manager.schedule.get_jobs().await;
@@ -438,7 +438,7 @@ impl Worker {
             debug!("register on manager url: {}", url);
             let mut retry = 10;
             while retry > 0 {
-                if let Err(e) = post_json(&url, &msg, self.http_client.clone()).await{
+                if let Err(e) = post_json(&url, &msg, Some(self.http_client.clone())).await{
                     error!("Failed to register worker");
                     retry -= 1;
                     if retry > 0 {
@@ -463,7 +463,7 @@ impl Worker {
             error_msg: job_msg.msg.clone(),
             ..MirrorStatus::default()
         };
-        
+
         println!("debug: {:?}", smsg);
 
         //某些提供商（例如rsync）可能知道镜像的大小
@@ -479,7 +479,7 @@ impl Worker {
         for root in cfg_lock.manager.api_base_list(){
             let url = format!("{}/workers/{}/jobs/{}", root, name, job_msg.name);
             debug!("reporting on manager url: {}", url);
-            if let Err(e) = post_json(&url, &smsg, self.http_client.clone()).await{
+            if let Err(e) = post_json(&url, &smsg, Some(self.http_client.clone())).await{
                 error!("Failed to update mirror({}) status: {}", job_msg.name, e);
             }
         }
@@ -503,7 +503,7 @@ impl Worker {
         for root in cfg_lock.manager.api_base_list(){
             let url = format!("{}/workers/{}/schedules", root, name);
             debug!("reporting on manager url: {}", url);
-            if let Err(e) = post_json(&url, &msg, self.http_client.clone()).await {
+            if let Err(e) = post_json(&url, &msg, Some(self.http_client.clone())).await {
                 error!("Failed to upload schedules: {}", e);
             }
         }
@@ -516,7 +516,7 @@ impl Worker {
 
         let url = format!("{}/workers/{}/jobs", api_base, name);
 
-        match get_json::<Vec<MirrorStatus>>(&url, self.http_client.clone()).await{
+        match get_json::<Vec<MirrorStatus>>(&url, Some(self.http_client.clone())).await{
             Ok(jobs) => {
                 mirror_list = jobs;
             }
@@ -533,7 +533,7 @@ impl Worker {
 async fn post(cmd: Json<WorkerCmd>, w: &State<WorkerManager>) -> (Status, Json<Response>) {
     let mut list_lock = w.schedule.list.lock().await;
     let mut jobs_lock = w.schedule.jobs.lock().await;
-    
+
 
     let cmd = cmd.into_inner();
     info!("Received command: {}", cmd);
@@ -562,7 +562,7 @@ async fn post(cmd: Json<WorkerCmd>, w: &State<WorkerManager>) -> (Status, Json<R
             // No matter what command, the existing job
             // schedule should be flushed
             w.schedule.remove(&*job.name(), &mut list_lock, &mut jobs_lock);
-    
+
             // if job disabled, start them first
             match cmd.cmd {
                 CmdVerb::Start | CmdVerb::Restart => {
@@ -605,9 +605,9 @@ async fn post(cmd: Json<WorkerCmd>, w: &State<WorkerManager>) -> (Status, Json<R
                     return (Status::NotAcceptable, Json(Response {msg: "Invalid Command".to_string()}));
                 }
             }
-    
+
             (Status::Ok, Json(Response {msg: "Ok".to_string()}))
         }
     }
-    
+
 }

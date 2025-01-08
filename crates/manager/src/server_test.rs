@@ -173,7 +173,7 @@ mod tests {
         s.engine = s.engine.manage(reqwest::Client::new());
 
 
-        let client = Client::tracked(s.run()).await.expect("valid rocket instance");
+        let client = Client::tracked(s.engine).await.expect("valid rocket instance");
         let response = client.get("/ping").dispatch().await;
         assert_eq!(response.status(), Status::Ok);
         // assert_eq!(response.body().take(), "pong");
@@ -615,11 +615,11 @@ mod tests {
 
         s.engine = s.engine.manage(reqwest::Client::new());
         let rocket_handle = tokio::spawn(async move {
-            s.run().launch().await.expect("Rocket launch failed");
+            s.run().await;
         });
         tokio::time::sleep(time::Duration::from_secs(1)).await;
 
-        let resp: HashMap<String, String> = get_json(&format!("{base_url}/ping"), Arc::new(None)).await.unwrap();
+        let resp: HashMap<String, String> = get_json(&format!("{base_url}/ping"), None).await.unwrap();
         assert_eq!(resp.get("message").unwrap(), "pong");
         
         let w = WorkerStatus{
@@ -627,7 +627,7 @@ mod tests {
             ..WorkerStatus::default()
         };
         
-        let resp = post_json(&format!("{base_url}/workers"), &w, Arc::new(None)).await.unwrap();
+        let resp = post_json(&format!("{base_url}/workers"), &w, None).await.unwrap();
         assert_eq!(resp.status(), reqwest::StatusCode::OK);
         
 
@@ -647,13 +647,13 @@ mod tests {
             url: format!("{worker_base_url}/cmd"),
             ..WorkerStatus::default()
         };
-        let resp = post_json(&format!("{base_url}/workers"), &w, Arc::new(None)).await.unwrap();
+        let resp = post_json(&format!("{base_url}/workers"), &w, None).await.unwrap();
         assert_eq!(resp.status(), reqwest::StatusCode::OK);
         
         let rocket_handle2 = tokio::spawn(async move {
             worker_server.launch().await.expect("Rocket launch failed");
         });
-        let resp: HashMap<String, String> = get_json(&format!("{worker_base_url}/ping"), Arc::new(None)).await.unwrap();
+        let resp: HashMap<String, String> = get_json(&format!("{worker_base_url}/ping"), None).await.unwrap();
         assert_eq!(resp.get("message").unwrap(), "pong");
         
 
@@ -672,7 +672,7 @@ mod tests {
             worker_id: "no_exist_worker".to_string(),
             ..ClientCmd::default()
         };
-        let resp = post_json(url, &client_cmd, Arc::new(None)).await.unwrap();
+        let resp = post_json(url, &client_cmd, None).await.unwrap();
         assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
     }
     
@@ -683,7 +683,7 @@ mod tests {
             worker_id: "test_worker_cmd".to_string(),
             ..ClientCmd::default()
         };
-        let resp = post_json(url, &client_cmd, Arc::new(None)).await.unwrap();
+        let resp = post_json(url, &client_cmd, None).await.unwrap();
         assert_eq!(resp.status(), reqwest::StatusCode::OK);
 
         match rx.recv().await{

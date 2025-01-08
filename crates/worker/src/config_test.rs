@@ -66,7 +66,7 @@ exec_on_failure = [
     // 当给定错误的文件地址
     #[test]
     fn test_wrong_file(){
-        let cfg = load_config(Some("/path/to/invalid/file"));
+        let cfg = load_config("/path/to/invalid/file");
         assert!(cfg.is_err());
     }
 
@@ -136,7 +136,7 @@ use_ipv6 = true
         perms.set_mode(0o644); // 设置权限
         fs::set_permissions(file_ubuntu, perms).expect("failed to set permissions");
 
-        let cfg = load_config(Some(tmp_file_path.to_str().unwrap())).unwrap();
+        let cfg = load_config(tmp_file_path.to_str().unwrap()).unwrap();
         assert_eq!(cfg.global.name, Some("test_worker".to_string()));
         assert_eq!(cfg.global.interval, Some(240));
         assert_eq!(cfg.global.retry, Some(3));
@@ -232,7 +232,7 @@ use_ipv6 = true
         // 设置文件权限为 0644
         fs::set_permissions(file_nest, fs::Permissions::from_mode(0o644)).expect("failed to set permissions");
 
-        let cfg = load_config(Some(tmp_file_path.to_str().unwrap())).unwrap();
+        let cfg = load_config(tmp_file_path.to_str().unwrap()).unwrap();
         assert_eq!(cfg.global.name, Some("test_worker".to_string()));
         assert_eq!(cfg.global.interval, Some(240));
         assert_eq!(cfg.global.retry, Some(3));
@@ -299,7 +299,7 @@ use_ipv6 = true
 
         // 写入临时文件
         tmp_file.write_all(CFG_BLOB.as_bytes()).expect("failed to write to tmp file");
-        let cfg = load_config(Some(tmp_file_path.to_str().unwrap())).unwrap();
+        let cfg = load_config(tmp_file_path.to_str().unwrap()).unwrap();
 
         let mut providers: HashMap<String, Box<dyn MirrorProvider>> = HashMap::new();
         for m in &cfg.mirrors {
@@ -389,7 +389,7 @@ use_ipv6 = true
 
         // 写入临时文件
         tmp_file.write_all(CFG_BLOB1.as_bytes()).expect("failed to write to tmp file");
-        let cfg = load_config(Some(tmp_file_path.to_str().unwrap())).unwrap();
+        let cfg = load_config(tmp_file_path.to_str().unwrap()).unwrap();
 
         let mut providers: HashMap<String, Box<dyn MirrorProvider>> = HashMap::new();
         for m in &cfg.mirrors {

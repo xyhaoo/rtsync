@@ -8,7 +8,6 @@ name = "internal"
 bench = false
 
 [dependencies]
-#clap = { version = "4.5.20", features = ["derive"] }
 log = "0.4.22"
 fern = { version = "0.7.0", features = ["colored"] }
 chrono = { version = "0.4.38", features = ["serde"]}

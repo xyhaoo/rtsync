@@ -1,41 +1,16 @@
 use std::{fmt, fs};
+use std::str::FromStr;
+use clap::ArgMatches;
 use clap::builder::Str;
 use serde::de::Error;
 use serde::Deserialize;
-use crate::{Cli};
+use anyhow::Result;
 
 
-#[derive(Debug)]
-enum ConfigError {
-    IoError(std::io::Error),
-    TomlError(toml::de::Error),
-    // Add other error types as needed
-}
-
-impl fmt::Display for ConfigError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ConfigError::IoError(err) => write!(f, "IO error: {}", err),
-            ConfigError::TomlError(err) => write!(f, "TOML error: {}", err),
-        }
-    }
-}
-
-impl From<std::io::Error> for ConfigError {
-    fn from(err: std::io::Error) -> ConfigError {
-        ConfigError::IoError(err)
-    }
-}
-
-impl From<toml::de::Error> for ConfigError {
-    fn from(err: toml::de::Error) -> ConfigError {
-        ConfigError::TomlError(err)
-    }
-}
 
 // Config是顶级的可序列化配置结构
 #[derive(Debug, Default, Deserialize, Clone)]
-pub(crate) struct Config {
+pub struct Config {
     #[serde(default)]
     pub(crate) debug: bool,
     pub(crate) server: ServerConfig,
@@ -69,7 +44,7 @@ pub(crate) struct  FileConfig {
 }
 
 // LoadConfig从指定文件加载配置
-fn load_config(cfg_file: Option<String>, c:Option<Cli>)->Result<Config, ConfigError>{
+pub fn load_config(cfg_file: Option<String>, c: &ArgMatches) -> Result<Config>{
     let mut cfg = Config::default();
     cfg.server.addr = Some("127.0.0.1".to_string());
     cfg.server.port = Some(14242);
@@ -77,35 +52,34 @@ fn load_config(cfg_file: Option<String>, c:Option<Cli>)->Result<Config, ConfigEr
     cfg.files.status_file = Some("/var/lib/rtsync/rtsync.json".to_string());
     cfg.files.db_file = Some("bolt".to_string());
     
-    if let Some(file) = cfg_file {
-        let config_contents = fs::read_to_string(file)?;
-        cfg = toml::de::from_str(&config_contents)?
+    if let Some(cfg_file) = cfg_file {
+        if !cfg_file.is_empty(){
+            let config_contents = fs::read_to_string(cfg_file)?;
+            cfg = toml::de::from_str(&config_contents)?
+        }
+    }
+    if let Ok(Some(addr)) = c.try_get_one::<String>("addr"){
+        cfg.server.addr = Some(addr.clone());
+    }
+
+    if let Ok(Some(port)) = c.try_get_one::<String>("port"){
+        cfg.server.port = Some(u32::from_str(port)?);
     }
     
-    if let Some(c) = c {
-        if let Some(addr) = c.addr {
-            cfg.server.addr = Some(addr);
-        }
-        if let Some(port) = c.port {
-            if port < 65536{
-                cfg.server.port = Some(port);
-            }
-            
-        }
-        if let (Some(cert),Some(key)) = (c.cert, c.key) {
-            cfg.server.ssl_cert = Some(cert);
-            cfg.server.ssl_key = Some(key);
-        }
-        if let  Some(status_file) = c.status_file {
-            cfg.files.status_file = Some(status_file);
-        }
-        if let Some(db_file) = c.db_file {
-            cfg.files.db_file = Some(db_file);
-        }
-        if let Some(db_type) = c.db_type {
-            cfg.files.db_type = Some(db_type);
-        }
+    if let (Ok(Some(cert)), Ok(Some(key))) = (c.try_get_one::<String>("cert"), c.try_get_one::<String>("key")){
+        cfg.server.ssl_cert = Some(cert.clone());
+        cfg.server.ssl_key = Some(key.clone());
     }
+    if let Ok(Some(status_file)) = c.try_get_one::<String>("status-file"){
+        cfg.files.status_file = Some(status_file.clone());
+    }
+    if let Ok(Some(db_file)) = c.try_get_one::<String>("db-file"){
+        cfg.files.db_file = Some(db_file.clone());
+    }
+    if let Ok(Some(db_type)) = c.try_get_one::<String>("db-type"){
+        cfg.files.db_type = Some(db_type.clone());
+    }
+    
     Ok(cfg)
 }
 
@@ -140,7 +114,7 @@ mod tests {
     use std::fs::{self, OpenOptions};
     use std::io::{self, Write};
     use std::os::unix::fs::PermissionsExt; // 引入用于设置权限的扩展
-    use clap::{Parser, Subcommand};
+    use clap::{arg, Arg, ArgAction, Command, Parser, Subcommand};
     use std::env;
     //使用命令行参数初始化Config的测试
     #[test]
@@ -161,62 +135,97 @@ mod tests {
 
         // 用从命令行中（实例化Cli对象）读取的config（文件）和命令行中的其他参数来初始化Config struct
         //当命令中没有制定配置文件所在地址
-        let args = vec![
-            "test".to_string(), //第一个参数是程序名
-        ];
-        let cli = Cli::parse_from(args);
-        let cfg_file = cli.config.clone();
-        let cfg: Config = load_config(cfg_file, Some(cli)).expect("failed to create cfg when giving nothing");
+        let matches = Command::new("test_load_config")
+            .args(&[
+                arg!(-c --config <FILE>),
+                arg!(--addr <ADDR>),
+                arg!(--port <PORT>),
+                arg!(--cert <FILE>),
+                arg!(--key <FILE>),
+                Arg::new("status-file").long("status-file").value_name("STATUS_FILE").action(ArgAction::Set),
+                Arg::new("db-file").long("db-file").value_name("DB_FILE").action(ArgAction::Set),
+            ])
+            .try_get_matches_from(["test_load_config"])
+            .unwrap();
+        
+        let cfg_file = matches.get_one::<String>("config");
+        let cfg: Config = load_config(cfg_file.cloned(), &matches).expect("failed to create cfg when giving nothing");
         assert_eq!(cfg.server.addr.unwrap(), "127.0.0.1".to_string());
-
+        
         // 当命令参数提供了配置文件的地址
-        let args = vec![
-            "test".to_string(), 
-            "-c".to_string(), path.to_str().expect("failed to parse file path").to_string(),
-        ];
-        let cli = Cli::parse_from(args);
-        assert!(cli.config.is_some());   //此时提供了配置文件地址， cli变量内此字段应有值
-        let cfg_file = cli.config.clone();
-        let cfg: Config = load_config(cfg_file, Some(cli)).expect("failed to create cfg when only giving file_path");
+        let matches = Command::new("test_load_config")
+            .args(&[
+                arg!(-c --config <FILE>),
+                arg!(--addr <ADDR>),
+                arg!(--port <PORT>),
+                arg!(--cert <FILE>),
+                arg!(--key <FILE>),
+                Arg::new("status-file").long("status-file").value_name("STATUS_FILE").action(ArgAction::Set),
+                Arg::new("db-file").long("db-file").value_name("DB_FILE").action(ArgAction::Set),
+            ])
+            .try_get_matches_from(["test_load_config", "-c", path.to_str().unwrap()])
+            .unwrap();
+        
+        let cfg_file = matches.get_one::<String>("config").cloned().unwrap();
+        assert_eq!(cfg_file, path.to_str().unwrap());   //此时提供了配置文件地址， cli变量内此字段应有值
+        let cfg: Config = load_config(Some(cfg_file), &matches).expect("failed to create cfg when only giving file_path");
         assert_eq!(cfg.server.addr.unwrap(), "0.0.0.0".to_string());
         assert_eq!(cfg.server.port.unwrap(), 5000);
         assert_eq!(cfg.files.status_file.unwrap(), "/tmp/rtsync.json".to_string());
         assert_eq!(cfg.files.db_file.unwrap(), "/var/lib/rtsync/rtsync.db".to_string());
-        
+
         // 当提供除配置文件地址外的其他命令行参数
-        let args = vec![
-            "test".to_string(),
-            "--addr".to_string(), "0.0.0.0".to_string(),
-            "--port".to_string(), "5001".to_string(),
-            "--cert".to_string(), "/ssl.cert".to_string(),
-            "--key".to_string(), "/ssl.key".to_string(),
-            "--status-file".to_string(), "/rtsync.json".to_string(),
-            "--db-file".to_string(), "/rtsync.db".to_string(),
-        ];
-        let cli = Cli::parse_from(args);
-        assert!(cli.config.is_none());   //此时并未提供配置文件地址， cli变量内此字段应为None
-        let cfg_file = cli.config.clone();
-        let cfg: Config = load_config(cfg_file, Some(cli)).expect("failed to create cfg when giving options except config addr");
+        let matches = Command::new("test_load_config")
+            .args(&[
+                arg!(-c --config <FILE>),
+                arg!(--addr <ADDR>),
+                arg!(--port <PORT>),
+                arg!(--cert <FILE>),
+                arg!(--key <FILE>),
+                Arg::new("status-file").long("status-file").value_name("STATUS_FILE").action(ArgAction::Set),
+                Arg::new("db-file").long("db-file").value_name("DB_FILE").action(ArgAction::Set),
+            ])
+            .try_get_matches_from(["test_load_config".to_string(),
+                "--addr".to_string(), "0.0.0.0".to_string(),
+                "--port".to_string(), "5001".to_string(),
+                "--cert".to_string(), "/ssl.cert".to_string(),
+                "--key".to_string(), "/ssl.key".to_string(),
+                "--status-file".to_string(), "/rtsync.json".to_string(),
+                "--db-file".to_string(), "/rtsync.db".to_string(),])
+            .unwrap();
+
+        let cfg_file = matches.get_one::<String>("config");
+        assert!(cfg_file.is_none());   //此时并未提供配置文件地址， cli变量内此字段应为None
+        let cfg: Config = load_config(cfg_file.cloned(), &matches).expect("failed to create cfg when giving options except config addr");
         assert_eq!(cfg.server.addr.unwrap(), "0.0.0.0".to_string());
         assert_eq!(cfg.server.port.unwrap(), 5001);
         assert_eq!(cfg.server.ssl_cert.unwrap(), "/ssl.cert".to_string());
         assert_eq!(cfg.server.ssl_key.unwrap(), "/ssl.key".to_string());
         assert_eq!(cfg.files.status_file.unwrap(), "/rtsync.json".to_string());
         assert_eq!(cfg.files.db_file.unwrap(), "/rtsync.db".to_string());
-
+        
+        
         // 当提供除url外的命令行参数
-        let args = vec![
-            "test".to_string(),
-            "-c".to_string(), path.to_str().expect("failed to parse file path").to_string(),
-            "--cert".to_string(), "/ssl.cert".to_string(),
-            "--key".to_string(), "/ssl.key".to_string(),
-            "--status-file".to_string(), "/rtsync.json".to_string(),
-            "--db-file".to_string(), "/rtsync.db".to_string(),
-        ];
-        let cli = Cli::parse_from(args);
-        assert!(cli.config.is_some());   //此时提供了配置文件地址， cli变量内此字段应有值
-        let cfg_file = cli.config.clone();
-        let cfg: Config = load_config(cfg_file, Some(cli)).expect("failed to create cfg when giving options except url");
+        let matches = Command::new("test_load_config")
+            .args(&[
+                arg!(-c --config <FILE>),
+                arg!(--addr <ADDR>),
+                arg!(--port <PORT>),
+                arg!(--cert <FILE>),
+                arg!(--key <FILE>),
+                Arg::new("status-file").long("status-file").value_name("STATUS_FILE").action(ArgAction::Set),
+                Arg::new("db-file").long("db-file").value_name("DB_FILE").action(ArgAction::Set),
+            ])
+            .try_get_matches_from(["test_load_config".to_string(),
+                "-c".to_string(), path.to_str().expect("failed to parse file path").to_string(),
+                "--cert".to_string(), "/ssl.cert".to_string(),
+                "--key".to_string(), "/ssl.key".to_string(),
+                "--status-file".to_string(), "/rtsync.json".to_string(),
+                "--db-file".to_string(), "/rtsync.db".to_string(),])
+            .unwrap();
+        let cfg_file = matches.get_one::<String>("config");
+        assert!(cfg_file.is_some());   //此时提供了配置文件地址， cli变量内此字段应有值
+        let cfg: Config = load_config(cfg_file.cloned(), &matches).expect("failed to create cfg when giving options except url");
         assert_eq!(cfg.server.addr.unwrap(), "0.0.0.0".to_string());
         assert_eq!(cfg.server.port.unwrap(), 5000);
         assert_eq!(cfg.server.ssl_cert.unwrap(), "/ssl.cert".to_string());
