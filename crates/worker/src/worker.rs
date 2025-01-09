@@ -14,6 +14,7 @@ use libc::getpid;
 use nix::sys::signal::{kill, Signal};
 use rocket::http::Status;
 use rocket::serde::Serialize;
+use rocket::yansi::Paint;
 use skiplist::SkipMap;
 use tokio::time;
 use internal::status::SyncStatus;
@@ -66,7 +67,7 @@ impl WorkerManager{
 // Worker是rtsync worker的一个实例
 #[derive(Clone)]
 pub struct Worker {
-    cfg: Arc<Mutex<Config>>,
+    cfg: Arc<RwLock<Config>>,
     exit: (Option<Sender<()>>, Arc<Mutex<Receiver<()>>>),
     http_engine: Arc<Mutex<Option<Rocket<Build>>>>,
     http_client: Client,
@@ -98,7 +99,7 @@ impl Worker {
         let tx = Some(tx);
         let worker_manager = WorkerManager::new(32, concurrent as usize);
         let w = Worker{
-            cfg: Arc::new(Mutex::new(cfg)),
+            cfg: Arc::new(RwLock::new(cfg)),
             exit: (tx, Arc::new(Mutex::new(rx))),
             http_engine: Arc::new(Mutex::new(Some(Self::make_http_server(worker_manager.clone())))),
             http_client,
@@ -138,7 +139,7 @@ impl Worker {
         let mut jobs_lock = self.worker_manager.jobs.write().await;
         info!("Reloading mirror configs");
 
-        let old_mirrors = self.cfg.lock().await.mirrors.clone();
+        let old_mirrors = self.cfg.read().await.mirrors.clone();
         let difference = diff_mirror_config(&old_mirrors, &new_mirrors);
         drop(old_mirrors);
 
@@ -168,7 +169,7 @@ impl Worker {
                             self.disable_job(job, &mut list_lock, &mut job_lock).await;
                             drop((list_lock, job_lock));
                             // set new provider
-                            let provider = new_mirror_provider(op.mir_cfg.clone(), self.cfg.lock().await.clone()).await;
+                            let provider = new_mirror_provider(op.mir_cfg.clone(), self.cfg.read().await.clone()).await;
                             if let Err(e) = job.set_provider(provider){
                                 error!("Error setting job provider of {}: {}", name, e);
                                 continue;
@@ -212,7 +213,7 @@ impl Worker {
             if op.diff_op != Diff::Add{
                 continue;
             }
-            let provider = new_mirror_provider(op.mir_cfg, self.cfg.lock().await.clone()).await;
+            let provider = new_mirror_provider(op.mir_cfg, self.cfg.read().await.clone()).await;
             let job = MirrorJob::new(provider);
             let job_name = job.name();
             jobs_lock.insert(job_name.clone(), job.clone());
@@ -228,11 +229,11 @@ impl Worker {
             info!("New job {}", job_name);
         }
 
-        self.cfg.lock().await.mirrors = new_mirrors;
+        self.cfg.write().await.mirrors = new_mirrors;
     }
 
     async fn init_jobs(&self) {
-        let cfg_lock = self.cfg.lock().await;
+        let cfg_lock = self.cfg.read().await;
         let cfg = cfg_lock.clone();
         for mirror in cfg_lock.mirrors.iter(){
             let provider = new_mirror_provider(mirror.clone(), cfg.clone()).await;
@@ -260,7 +261,7 @@ impl Worker {
     async fn run_http_server(&self) -> Rocket<Build> {
         let mut rocket = self.http_engine.lock().await.take().unwrap();
         let mut figment = rocket.figment().clone();
-        let cfg_lock = self.cfg.lock().await;
+        let cfg_lock = self.cfg.read().await;
         if let (Some(addr), Some(port)) = (cfg_lock.server.listen_addr.as_ref(), cfg_lock.server.listen_port.as_ref()){
             figment = figment
                 .merge((rocket::Config::PORT, port))
@@ -411,12 +412,12 @@ impl Worker {
     }
 
     async fn name(&self) -> String {
-        self.cfg.lock().await.global.name.clone().unwrap()
+        self.cfg.read().await.global.name.clone().unwrap()
     }
 
     // url返回worker的http服务器的url
     async fn url(&self) -> String {
-        let cfg_lock = self.cfg.lock().await;
+        let cfg_lock = self.cfg.read().await;
         let mut proto = "https";
         if cfg_lock.server.ssl_cert.is_none() || cfg_lock.server.ssl_key.is_none(){
             proto = "http";
@@ -432,7 +433,7 @@ impl Worker {
             ..WorkerStatus::default()
         };
 
-        let cfg_lock = self.cfg.lock().await;
+        let cfg_lock = self.cfg.read().await;
         for root in cfg_lock.manager.api_base_list(){
             let url = format!("{}/workers", root);
             debug!("register on manager url: {}", url);
@@ -455,7 +456,7 @@ impl Worker {
     async fn update_status(&self, job: &MirrorJob, job_msg: &JobMessage) {
         let mut smsg = MirrorStatus{
             name: job_msg.name.clone(),
-            worker: self.cfg.lock().await.global.name.clone().unwrap(),
+            worker: self.cfg.read().await.global.name.clone().unwrap(),
             is_master: job.provider.is_master(),
             status: job_msg.status,
             upstream: job.provider.upstream(),
@@ -475,7 +476,7 @@ impl Worker {
         drop(size_lock);
 
         let name = self.name().await;
-        let cfg_lock = self.cfg.lock().await;
+        let cfg_lock = self.cfg.read().await;
         for root in cfg_lock.manager.api_base_list(){
             let url = format!("{}/workers/{}/jobs/{}", root, name, job_msg.name);
             debug!("reporting on manager url: {}", url);
@@ -499,7 +500,7 @@ impl Worker {
         };
 
         let name = self.name().await;
-        let cfg_lock = self.cfg.lock().await;
+        let cfg_lock = self.cfg.read().await;
         for root in cfg_lock.manager.api_base_list(){
             let url = format!("{}/workers/{}/schedules", root, name);
             debug!("reporting on manager url: {}", url);
@@ -512,7 +513,7 @@ impl Worker {
     async fn fetch_job_status(&self) -> Vec<MirrorStatus> {
         let mut mirror_list = vec![];
         let name = self.name().await;
-        let api_base = &self.cfg.lock().await.manager.api_base_list()[0];
+        let api_base = &self.cfg.read().await.manager.api_base_list()[0];
 
         let url = format!("{}/workers/{}/jobs", api_base, name);
 
