@@ -35,7 +35,9 @@ pub(crate) struct JobMessage {
     pub(crate) status: SyncStatus,
     pub(crate) name: String,
     pub(crate) msg: String,
-    pub(crate) schedule: bool,
+    // 是否进行下次同步，将会作为信号发送给worker来安排该任务的调度时间
+    // 任务同步成功（且未被其他信号影响）或失败时为true，正在同步时为false
+    pub(crate) schedule: bool,  
 }
 
 // Job状态枚举

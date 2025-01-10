@@ -257,6 +257,7 @@ impl DbAdapter for KvDbAdapter {
         
     }
 
+    // 将worker的last_online字段设置为当前时刻
     fn refresh_worker(&self, worker_id: &str) -> Result<WorkerStatus, Box<dyn Error>> {
         // 获取现有的 WorkerStatus
         let mut worker = self.get_worker(worker_id)?;

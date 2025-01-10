@@ -31,7 +31,6 @@ enum_dispatch = "0.3.13"
 nix = { version = "0.29.0", features = ["process", "signal"] }
 lazy_static = "1.5.0"
 tokio = "1.41.1"
-#crossbeam-channel = "0.5.13"
 scopeguard = "1.2"
 async-trait = "0.1.83"
 anyhow = "1.0.95"

@@ -65,14 +65,14 @@ pub struct MirrorSchedule {
     pub next_schedule: DateTime<Utc>,
 }
 
-// CmdVerb是对job或worker的操作
+// CmdVerb是对worker或其job的操作
 #[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
 pub enum CmdVerb {
-    Start,  // 开始job
-    Stop,   // 停止同步，但仍保持job存在
-    Disable,    // 禁用job（停止线程）
+    Start,  // 开始同步
+    Stop,   // 停止同步，但仍保持job协程存在
+    Disable,    // 禁用同步作业（停止协程）
     Restart,    //重新启动同步job
-    Ping,   //  确保线程存活
+    Ping,   //  确保同步协程存活
     Reload, // 通知worker重载mirror config
 }
 impl fmt::Display for CmdVerb {

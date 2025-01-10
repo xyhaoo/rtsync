@@ -4,6 +4,7 @@ use tokio::sync::{Mutex, MutexGuard};
 use chrono::{DateTime, Utc};
 use skiplist::skipmap::SkipMap;
 use log::{debug, warn};
+use serde::Serialize;
 use crate::job::MirrorJob;
 // jobs的调度队列
 
@@ -59,6 +60,7 @@ impl ScheduleQueue {
         debug!("添加了 job {} @ {:?}", job_name, sched_time);
     }
 
+    // 如果第一个任务的同步时间比现在早，将其弹出
     pub async fn pop(&self) -> Option<MirrorJob> {
         let mut list = self.list.lock().await;
         
@@ -72,7 +74,6 @@ impl ScheduleQueue {
                 return Some(ret.1);
             }
         }
-        
         None
     }
 
@@ -82,14 +83,15 @@ impl ScheduleQueue {
                   jobs_lock: &mut MutexGuard<HashMap<String, bool>>) 
         -> bool 
     {
-        let to_remove: Vec<_> = list_lock.iter()
-            .filter_map(|(k, v)| if v.name() == name { Some(*k) } else { None })
-            .collect();
-        
-        if !to_remove.is_empty() {
-            for key in to_remove {
-                let result = list_lock.remove(&key);
+        let mut to_remove = None;
+        for entry in list_lock.iter() {
+            if entry.1.name() == name {
+                to_remove = Some(entry.0.clone());
+                break;
             }
+        }
+        if let Some(key) = to_remove {
+            list_lock.remove(&key);
             jobs_lock.remove(name);
             return true;
         }

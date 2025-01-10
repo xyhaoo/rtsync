@@ -205,7 +205,7 @@ async fn delete_worker(id: &str, guard: Result<CheckWorkerId, Json<Response>>, a
     }
 }
 
-// list_jobs_of_worker使用指定worker的所有作业进行响应
+// list_jobs_of_worker返回指定worker的所有同步任务
 #[get("/workers/<id>/jobs")]
 async fn list_jobs_of_worker(id: &str, guard: Result<CheckWorkerId, Json<Response>>, adapter: &State<Box<dyn DbAdapter>>) -> (Status, Json<Result<Vec<MirrorStatus>, Response>>){
     if let Err(e) = guard{
@@ -245,7 +245,7 @@ async fn update_job_of_worker(id: &str, _job: &str, guard: Result<CheckWorkerId,
     }else{
         status.last_started = cur_status.last_started;
     }
-    // 只有同步成功时才需要last_update
+    // 只有同步成功时才需要更新last_update
     if status.status == Success{
         status.last_update = cur_time;
     }else {
@@ -264,7 +264,7 @@ async fn update_job_of_worker(id: &str, _job: &str, guard: Result<CheckWorkerId,
         }
     }
 
-    // for logging
+    // 打印日志
     match status.status {
         Syncing => {
             info!("job [{}] @<{}> 开始同步", status.name, status.worker);
@@ -328,6 +328,7 @@ async fn update_mirror_size(id: &str, _job: &str, guard: Result<CheckWorkerId, J
     }
 }
 
+// 更新worker同步任务的同步时间
 #[post("/workers/<id>/schedules", format = "application/json", data = "<schedules>")]
 async fn update_schedules_of_worker(id: &str, guard: Result<CheckWorkerId, Json<Response>>, schedules: Json<MirrorSchedules>, adapter: &State<Box<dyn DbAdapter>>) -> (Status, Json<Result<(),Response>>){
     if let Err(e) = guard{

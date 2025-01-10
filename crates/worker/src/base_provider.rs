@@ -32,6 +32,7 @@ use crate::config::{DockerConfig, MirrorConfig};
 pub(crate) struct BaseProvider {
     pub(crate) ctx: Arc<Mutex<Option<Context>>>,
     pub(crate) name: String,
+    // 任务从同步完成到下一次同步开始的间隔时间
     pub(crate) interval: Duration,
     pub(crate) retry: i64,
     pub(crate) timeout: Duration,

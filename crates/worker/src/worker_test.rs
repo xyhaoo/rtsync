@@ -81,7 +81,7 @@ mod tests {
             args: vec![],
             options: Default::default(),
         };
-        debug!("POST to {} with cmd {}", worker_url, cmd);
+        debug!("向 {} 发送 {} post请求", worker_url, cmd);
         assert!(post_json(worker_url, &worker_cmd, Some(http_client)).await.is_ok());
     }
 
@@ -110,8 +110,8 @@ mod tests {
         let worker_cfg = Config{
             global: GlobalConfig{
                 name: Some("dut".to_string()),
-                log_dir: Some("/tmp".to_string()),
-                mirror_dir: Some("/tmp".to_string()),
+                log_dir: Some("/tmp/worker".to_string()),
+                mirror_dir: Some("/tmp/worker".to_string()),
                 concurrent: Some(2),
                 interval: Some(1),
                 ..GlobalConfig::default()
@@ -185,7 +185,7 @@ mod tests {
         cfg.mirrors = vec![MirrorConfig{
             name: Some("job-ls".to_string()),
             provider: Some(ProviderEnum::Command),
-            command: Some("ls".to_string()),
+            command: Some("sleep 10".to_string()),
             ..MirrorConfig::default()
         }];
         
@@ -231,7 +231,7 @@ mod tests {
                         }
                     }
                 }
-                _ = tokio::time::sleep(tokio::time::Duration::from_secs(2)) => {
+                _ = tokio::time::sleep(tokio::time::Duration::from_secs(15)) => {
                     assert_ne!(url, "");
                     assert_eq!(job_running, false);
                     assert_eq!(last_status, SyncStatus::Success);

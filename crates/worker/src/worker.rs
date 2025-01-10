@@ -14,7 +14,7 @@ use libc::getpid;
 use nix::sys::signal::{kill, Signal};
 use rocket::http::Status;
 use rocket::serde::Serialize;
-use rocket::yansi::Paint;
+use scopeguard::defer;
 use skiplist::SkipMap;
 use tokio::time;
 use internal::status::SyncStatus;
@@ -32,6 +32,7 @@ pub(crate) struct Response {
 
 #[derive(Clone)]
 struct WorkerManager{
+    l: Arc<Mutex<()>>,
     jobs: Arc<RwLock<HashMap<String, MirrorJob>>>,
     manager_chan: (Sender<JobMessage>, Arc<Mutex<Receiver<JobMessage>>>),
     semaphore: Arc<Semaphore>,
@@ -42,6 +43,7 @@ impl WorkerManager{
         let (tx, rx) = channel(manager_chan_buffer);
         let rx = Arc::new(Mutex::new(rx));
         WorkerManager{
+            l: Arc::new(Mutex::new(())),
             jobs: Arc::new(RwLock::new(HashMap::new())),
             manager_chan: (tx, rx),
             semaphore: Arc::new(Semaphore::new(semaphore_permits)),
@@ -120,15 +122,15 @@ impl Worker {
     }
 
     pub async fn halt(&mut self) {
-        let jobs_lock = self.worker_manager.jobs.write().await;
-        info!("Stopping all the jobs");
-        for job in jobs_lock.values() {
+        let lock  = self.worker_manager.l.lock().await;
+        info!("停止所有镜像任务");
+        for job in self.worker_manager.jobs.read().await.values() {
             if job.state() != JobState::Disabled{
                 job.ctrl_chan_tx.send(JobCtrlAction::Halt).await.unwrap();
             }
         }
-        info!("All the jobs are stopped");
-        drop(jobs_lock);
+        info!("所有镜像任务已停止");
+        drop(lock);
         self.exit.0 = None;
     }
 
@@ -136,19 +138,21 @@ impl Worker {
     // from new mirror configs
     // TODO: deleted job should be removed from manager-side mirror list
     pub async fn reload_mirror_config(&self, new_mirrors: Vec<MirrorConfig>) {
-        let mut jobs_lock = self.worker_manager.jobs.write().await;
-        info!("Reloading mirror configs");
+        let lock = self.worker_manager.l.lock().await;
+        defer!{drop(lock);}
+        info!("重载镜像任务配置");
 
         let old_mirrors = self.cfg.read().await.mirrors.clone();
         let difference = diff_mirror_config(&old_mirrors, &new_mirrors);
         drop(old_mirrors);
 
-        // first deal with deletion and modifications
+        // 首先处理删除和修改
         for op in difference.iter() {
             if op.diff_op == Diff::Add{
                 continue;
             }
             let name = op.mir_cfg.name.as_ref().unwrap();
+            let mut jobs_lock = self.worker_manager.jobs.write().await;
             match jobs_lock.get_mut(name) {
                 None => {
                     warn!("Job {} not found", name);
@@ -200,7 +204,7 @@ impl Worker {
                                     self.worker_manager.schedule.add_job(Utc::now(), job.clone()).await;
                                 }
                             }
-                            info!("Reloaded job {}", name);
+                            info!("重载任务 {}", name);
                         },
                         _ => { drop((list_lock, job_lock)); }
                     }
@@ -216,7 +220,7 @@ impl Worker {
             let provider = new_mirror_provider(op.mir_cfg, self.cfg.read().await.clone()).await;
             let job = MirrorJob::new(provider);
             let job_name = job.name();
-            jobs_lock.insert(job_name.clone(), job.clone());
+            { self.worker_manager.jobs.write().await.insert(job_name.clone(), job.clone()); }
 
             job.set_state(JobState::None);
             let job_clone = job.clone();
@@ -226,10 +230,10 @@ impl Worker {
                 job_clone.run(manager_chan, semaphore).await.unwrap();
             });
             self.worker_manager.schedule.add_job(Utc::now(), job).await;
-            info!("New job {}", job_name);
+            info!("新任务 {}", job_name);
         }
 
-        self.cfg.write().await.mirrors = new_mirrors;
+        { self.cfg.write().await.mirrors = new_mirrors; }
     }
 
     async fn init_jobs(&self) {
@@ -254,7 +258,7 @@ impl Worker {
     fn make_http_server(worker_manager: WorkerManager) -> Rocket<Build> {
         let s = Rocket::build()
             .manage(worker_manager)    // Arc
-            .mount("/" ,routes![post]);
+            .mount("/" ,routes![handle_cmd_from_manager]);
         s
     }
 
@@ -277,17 +281,19 @@ impl Worker {
     }
 
     async fn run_schedule(&self) {
-        let jobs_lock = self.worker_manager.jobs.write().await;
+        let lock = self.worker_manager.l.lock().await;
         let mirror_list = self.fetch_job_status().await;
         let mut unset = HashMap::new();
-        for name in jobs_lock.keys() {
-            unset.insert(name, true);
+        for name in self.worker_manager.jobs.read().await.keys() {
+            unset.insert(name.clone(), true);
         }
-        // Fetch mirror list stored in the manager
-        // put it on the scheduled time
-        // if it's disabled, ignore it
+
+        // 获取存储在manager服务器数据库中的镜像状态列表
+        // 为其分配新的协程来准备启动该镜像的同步（未开始）
+        // 设置其同步开始时间后，放入worker的调度列表
+        // 如果这个镜像是被禁用的状态，就跳过它
         for m in mirror_list{
-            if let Some(job) = jobs_lock.get(&m.name){
+            if let Some(job) = self.worker_manager.jobs.read().await.get(&m.name){
                 unset.remove(&m.name);
                 match m.status {
                     SyncStatus::Disabled => {
@@ -313,17 +319,17 @@ impl Worker {
                             job_clone.run(manager_chan, semaphore).await.unwrap();
                         });
                         let stime = m.last_update + job.provider.interval().await;
-                        debug!("Scheduling job {} @{}", job.name(), stime.format("%d-%m-%Y %H:%M:%S"));
+                        debug!("安排了 job {} @{}", job.name(), stime.format("%d-%m-%Y %H:%M:%S"));
                         self.worker_manager.schedule.add_job(stime, job.clone()).await;
                     }
                 }
             }
         }
-        // some new jobs may be added
-        // which does not exist in the
-        // manager's mirror list
+
+        // 可能会启动一些不存在于mirror_list中的新同步任务
+        // 它们也会被安排进worker的调度列表
         for name in unset.keys() {
-            let job = jobs_lock.get(*name).unwrap();
+            let job = self.worker_manager.jobs.read().await.get(name).cloned().unwrap();
             job.set_state(JobState::None);
             let manager_chan = self.worker_manager.manager_chan.0.clone();
             let semaphore = Arc::clone(&self.worker_manager.semaphore);
@@ -333,8 +339,7 @@ impl Worker {
             });
             self.worker_manager.schedule.add_job(Utc::now(), job.clone()).await;
         }
-
-        drop(jobs_lock);
+        drop(lock);
 
         let sched_info = self.worker_manager.schedule.get_jobs().await;
         self.update_sched_info(sched_info).await;
@@ -346,50 +351,49 @@ impl Worker {
         loop {
             tokio::select! {
                 Some(job_msg) = manager_chan_rx.recv() => {
-			        // got status update from job
-                    match self.worker_manager.jobs.read().await.get(&job_msg.name){
-                        None => {
-                            warn!("Job {} not found", job_msg.name);
-                            continue;
-                        },
-                        Some(job) => {
-                            let job_state = job.state();
-                            println!("hehehe{i}");
-                            i+=1;
-                            if job_state != JobState::Ready && job_state != JobState::Halting{
-                                info!("Job {} state is not ready, skip adding new schedule", job_msg.name);
-                                continue;
-                            }
-                            // syncing status is only meaningful when job
-                            // is running. If it's paused or disabled
-                            // a sync failure signal would be emitted
-                            // which needs to be ignored
-                            self.update_status(job, &job_msg).await;
-
-                            // only successful or the final failure msg
-			                // can trigger scheduling
-                            if job_msg.schedule {
-                                let schedule_time = Utc::now() + job.provider.interval().await;
-                                info!("Next scheduled time for {}: {}",
-                                    job.name(),
-                                    schedule_time.format("%d-%m-%Y %H:%M:%S"));
-                                self.worker_manager.schedule.add_job(schedule_time, job.clone()).await;
-                            }
-
-                            let sched_info = self.worker_manager.schedule.get_jobs().await;
-                            self.update_sched_info(sched_info).await;
-                        }
+			        // 获取不断在更新的任务状态
+                    // 向manager服务器报告状态
+                    let lock = self.worker_manager.l.lock().await;
+                    let job = self.worker_manager.jobs.read().await.get(&job_msg.name).cloned();
+                    drop(lock);
+                    if job.is_none() {
+                        warn!("任务 {} 未找到", job_msg.name);
+                        continue;
                     }
+                    let job = job.unwrap();
+                    let job_state = job.state();
+                    println!("hehehe{i}");
+                    i+=1;
+                    if (job_state != JobState::Ready) && (job_state != JobState::Halting){
+                        info!("任务 {} 不是就绪状态，直到其状态被改变，不再为其安排新的同步时间", job_msg.name);
+                        continue;
+                    }
+                    // 任务的同步状态只有在它运行时才有意义。
+                    // 如果任务被暂停或禁用，则会发出同步失败信号，需要忽略该信号
+                    self.update_status(&job, &job_msg).await;
+                    
+                    // 只有同步任务成功或失败时发送的schedule信号（都为true）才会触发该任务的下一次同步调度
+                    if job_msg.schedule {
+                        let schedule_time = Utc::now() + job.provider.interval().await;
+                        info!("{} 的下一次同步时间: {}",
+                            job.name(),
+                            schedule_time.format("%Y-%m-%d %H:%M:%S"));
+                        self.worker_manager.schedule.add_job(schedule_time, job.clone()).await;
+                    }
+                    let sched_info = self.worker_manager.schedule.get_jobs().await;
+                    self.update_sched_info(sched_info).await;
                 },
 
                 _ = interval.tick() => {
-			        // check schedule every 5 seconds
+			        // 每隔五秒检查调度队列
                     if let Some(job) = self.worker_manager.schedule.pop().await{
                         job.ctrl_chan_tx.send(JobCtrlAction::Start).await.unwrap();
                     }
                 },
                 None = exit_lock.recv() => {
 			        // flush status update messages
+                    let lock = self.worker_manager.l.lock().await;
+                    defer!{drop(lock);}
                     loop {
                         if let Ok(job_msg) = manager_chan_rx.try_recv() {
                             debug!("status update from {}", job_msg.name);
@@ -436,15 +440,15 @@ impl Worker {
         let cfg_lock = self.cfg.read().await;
         for root in cfg_lock.manager.api_base_list(){
             let url = format!("{}/workers", root);
-            debug!("register on manager url: {}", url);
+            debug!("向 manager url: {} 注册 worker", url);
             let mut retry = 10;
             while retry > 0 {
                 if let Err(e) = post_json(&url, &msg, Some(self.http_client.clone())).await{
-                    error!("Failed to register worker");
+                    error!("注册worker失败");
                     retry -= 1;
                     if retry > 0 {
                         tokio::time::sleep(time::Duration::from_secs(1)).await;
-                        info!("Retrying... ({})", retry);
+                        info!("重试注册... ({})", retry);
                     }
                 }else{
                     break;
@@ -522,7 +526,7 @@ impl Worker {
                 mirror_list = jobs;
             }
             Err(e) => {
-                error!("Failed to fetch job status: {}", e);
+                error!("获取任务状态失败: {}", e);
             }
         }
         mirror_list
@@ -530,41 +534,45 @@ impl Worker {
 }
 
 
+// 处理从manager服务器发送来的控制信号
 #[post("/", format = "application/json", data = "<cmd>")]
-async fn post(cmd: Json<WorkerCmd>, w: &State<WorkerManager>) -> (Status, Json<Response>) {
-    let mut list_lock = w.schedule.list.lock().await;
-    let mut jobs_lock = w.schedule.jobs.lock().await;
-
-
+async fn handle_cmd_from_manager(cmd: Json<WorkerCmd>, w: &State<WorkerManager>) -> (Status, Json<Response>) {
+    let lock = w.l.lock().await;
+    defer!{
+        drop(lock);
+    }
     let cmd = cmd.into_inner();
-    info!("Received command: {}", cmd);
+    info!("收到命令: {}", cmd);
+    
+    // 对于worker的命令
     if cmd.mirror_id.is_empty(){
-        // worker-level commands
         match cmd.cmd{
             CmdVerb::Reload => {
-                // send myself a SIGHUP
+                // 给自身发送 SIGHUP， 用于重载config
                 let pid = unsafe { getpid() };
                 kill(Pid::from_raw(pid), Signal::SIGHUP).unwrap();
             },
             _ => {
-                return (Status::BadRequest, Json(Response {msg: "Invalid Command".to_string()}));
+                return (Status::NotAcceptable, Json(Response {msg: "无效的命令".to_string()}));
             }
         }
     }
 
-    // job level commands
+    // 对于job的命令
     // FIXME: client发送post请求后等待结果，然而请求的处理过程因为等待w.jobs.lock()而阻塞，超过了client等待结果返回的时间
     // FIXME: 现在把锁改为RwLock，避免死锁，但因每个函数上锁种类不同，可能会导致其他问题
     match w.jobs.read().await.get(&cmd.mirror_id){
         None => {
-            (Status::NotFound, Json(Response {msg: format!("Mirror '{}' not found", cmd.mirror_id)}))
+            (Status::NotFound, Json(Response {msg: format!("镜像 '{}' 未找到", cmd.mirror_id)}))
         }
         Some(job) => {
-            // No matter what command, the existing job
-            // schedule should be flushed
+            // 不管收到什么信号，首先要刷新同步队列
+            let mut list_lock = w.schedule.list.lock().await;
+            let mut jobs_lock = w.schedule.jobs.lock().await;
             w.schedule.remove(&*job.name(), &mut list_lock, &mut jobs_lock);
-
-            // if job disabled, start them first
+            drop((list_lock, jobs_lock));
+            
+            // 如果收到的是开始同步信号，且这个job当前被禁用，先将其启动
             match cmd.cmd {
                 CmdVerb::Start | CmdVerb::Restart => {
                     if job.state() == JobState::Disabled{
@@ -590,24 +598,26 @@ async fn post(cmd: Json<WorkerCmd>, w: &State<WorkerManager>) -> (Status, Json<R
                     job.ctrl_chan_tx.send(JobCtrlAction::Restart).await.unwrap();
                 },
                 CmdVerb::Stop => {
-                    // if job is disabled, no goroutine would be there
-                    // receiving this signal
+                    // 如果收到停止信号，而job当前是禁用状态，则忽略该信号
                     if job.state() != JobState::Disabled{
                         job.ctrl_chan_tx.send(JobCtrlAction::Stop).await.unwrap();
                     }
                 },
                 CmdVerb::Disable => {
+                    let mut list_lock = w.schedule.list.lock().await;
+                    let mut jobs_lock = w.schedule.jobs.lock().await;
                     w.disable_job(&job, &mut list_lock, &mut jobs_lock).await;
+                    drop((list_lock, jobs_lock));
                 },
                 CmdVerb::Ping => {
                     // empty
                 },
                 _ => {
-                    return (Status::NotAcceptable, Json(Response {msg: "Invalid Command".to_string()}));
+                    return (Status::NotAcceptable, Json(Response {msg: "无效的命令".to_string()}));
                 }
             }
 
-            (Status::Ok, Json(Response {msg: "Ok".to_string()}))
+            (Status::Ok, Json(Response {msg: "OK".to_string()}))
         }
     }
 
