@@ -42,6 +42,7 @@ lazy_static! {
 
 pub fn get_tls_config(ca_file: &str) -> Result<Vec<Certificate>, reqwest::Error> {
     let mut buf = Vec::new();
+    println!("debug： ca_file的位置是 {}", ca_file);
     File::open(ca_file)
         .expect("打开文件失败")
         .read_to_end(&mut buf).expect("不能读取该文件");

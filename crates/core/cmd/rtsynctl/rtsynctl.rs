@@ -43,7 +43,7 @@ struct Config {
 
 fn load_config(cfg_file: &str, cfg: &mut Config) -> Result<()>{
     if !cfg_file.is_empty(){
-        info!("Loading config: {}", cfg_file);
+        info!("加载配置文件: {}", cfg_file);
         let config_contents = fs::read_to_string(cfg_file)?;
         *cfg = toml::de::from_str(&config_contents)?;
     }
@@ -66,7 +66,7 @@ async fn initialize(c: &ArgMatches) -> Result<()>{
     load_config(SYSTEM_CFG_FILE, &mut cfg)?;
     let path = USER_CFG_FILE
         .replace("$HOME", &env::var("HOME").unwrap_or_default());
-    debug!("user config file: {}", path);
+    debug!("用户的配置文件: {}", path);
     if let Some(config) = c.get_one::<String>("config"){
         load_config(config.as_str(), &mut cfg)?;
     }
@@ -90,7 +90,7 @@ async fn initialize(c: &ArgMatches) -> Result<()>{
     }else {
         *url_lock = format!("http://{}:{}", &cfg.manager_addr, &cfg.manager_port);
     }
-    info!("Use manager address: {}", *url_lock);
+    info!("使用manager地址: {}", *url_lock);
     drop(url_lock);
 
     // create HTTP client
@@ -100,7 +100,7 @@ async fn initialize(c: &ArgMatches) -> Result<()>{
             *client_lock = client;
         }
         Err(e) => {
-            error!("error initializing HTTP client: {e}");
+            error!("初始化 HTTP 服务器失败: {e}");
             return Err(anyhow!(e));
         }
     }
@@ -120,7 +120,7 @@ async fn list_workers(c: &ArgMatches) -> Result<()>{
             workers = resp;
         }
         Err(e) => {
-            eprintln!("Filed to correctly get information from manager server: {}", e);
+            eprintln!("不能正确地从manager服务器获得信息: {}", e);
             exit(1);
         }
     }
@@ -147,7 +147,7 @@ async fn list_jobs(c: &ArgMatches) -> Result<()>{
                 jobs = resp;
             }
             Err(e) => {
-                eprintln!("Failed to correctly get information of all jobs from manager server: {}", e);
+                eprintln!("不能正确地从 manager 服务器获得所有同步任务的信息: {}", e);
                 exit(1);
             }
         }
@@ -162,7 +162,7 @@ async fn list_jobs(c: &ArgMatches) -> Result<()>{
                         statuses.push(status);
                     },
                     Err(e) => {
-                        eprintln!("Error parsing status: {}", e);
+                        eprintln!("解析状态失败: {}", e);
                         exit(1);
                     }
                 }
@@ -202,7 +202,7 @@ async fn list_jobs(c: &ArgMatches) -> Result<()>{
                         worker_jobs = resp;
                     },
                     Err(e) => {
-                        error!("Failed to correctly get jobs for WORKER {}: {}",worker_id, e);
+                        error!("获取 WORKER {} 的同步任务失败: {}",worker_id, e);
                     }
                 }
                 ans_tx.send(worker_jobs).await.unwrap();
@@ -211,7 +211,7 @@ async fn list_jobs(c: &ArgMatches) -> Result<()>{
         for _ in worker_ids.iter(){
             let job = ans_rx.recv().await.unwrap();
             if job.is_empty(){
-                eprintln!("Failed to correctly get information of jobs from at least one manager");
+                eprintln!("不能从至少一个manager正确获取同步作业信息");
                 exit(1);
             }
             jobs.extend(job);
@@ -238,7 +238,7 @@ async fn list_jobs(c: &ArgMatches) -> Result<()>{
                         println!("{}", output);
                     }
                     Err(e) => {
-                        eprintln!("Error printing out information: {}", e);
+                        eprintln!("输出信息失败: {}", e);
                         exit(1);
                     }
                 }
@@ -262,7 +262,7 @@ async fn list_jobs(c: &ArgMatches) -> Result<()>{
                         println!("{}", output);
                     }
                     Err(e) => {
-                        eprintln!("Error printing out information: {}", e);
+                        eprintln!("输出信息失败: {}", e);
                         exit(1)
                     }
                 }
@@ -305,21 +305,20 @@ async fn update_mirror_size(c: &ArgMatches) -> Result<()>{
     let client = CLIENT.read().await.clone();
     match rtsync::util::post_json(&url, &msg, Some(client)).await{
         Err(e) => {
-            eprintln!("Failed to send request to manager: {}", e);
+            eprintln!("向manager发送请求失败: {}", e);
             exit(1);
         },
         Ok(resp) => {
             if resp.status() != StatusCode::OK{
-                eprintln!("Manager failed to update mirror size: {:?}", resp);
+                eprintln!("Manager 更新镜像大小失败: {:?}", resp);
                 exit(1);
             }
-            // FIXME: 因为manager返回的json和原版的tunasync不同，这里解析可能会出错
             let status: rtsync::msg::MirrorStatus = resp.json().await.expect("无法解析成MirrorStatus");
             if status.size != *mirror_size {
-                eprintln!("Mirror size error, expecting {}, manager returned {}", mirror_size, status.size);
+                eprintln!("镜像大小错误, 应该为 {}, 但manager返回 {}", mirror_size, status.size);
                 exit(1);
             }
-            println!("Successfully updated mirror size to {}", mirror_size);
+            println!("成功将镜像的大小设置为 {}", mirror_size);
         }
     }
 
@@ -332,20 +331,19 @@ async fn remove_worker(c: &ArgMatches) -> Result<()>{
     let client = CLIENT.read().await.clone();
     let resp = client.delete(&url).send().await?;
     if resp.status() != StatusCode::OK{
-        eprintln!("Failed to correctly send: command: HTTP status code is not 200: {:?}", resp);
+        eprintln!("发送命令失败，HTTP状态码不是200: {:?}", resp);
         exit(1);
     }
-    // FIXME: 因为manager返回的json和原版的tunasync不同，这里解析可能会出错
-    let res: HashMap<String, String> = resp.json().await.expect("无法解析成HashMap");
+    let res: HashMap<String, String> = resp.json().await.expect("解析相应失败");
     if let Some(msg) = res.get("message"){
         if msg == "deleted"{
-            println!("Successfully removed the worker");
+            println!("成功删除worker");
         }else {
-            eprintln!("Failed to remove the worker");
+            eprintln!("删除worker失败");
             exit(1);
         }
     }else {
-        eprintln!("Failed to remove the worker, 没有解析到message字段");
+        eprintln!("删除worker失败, 没有解析到message字段");
         exit(1);
     }
     Ok(())
@@ -356,10 +354,10 @@ async fn flush_disabled_jobs(_c: &ArgMatches) -> Result<()>{
     let client = CLIENT.read().await.clone();
     let resp = client.delete(&url).send().await?;
     if resp.status() != StatusCode::OK{
-        eprintln!("Failed to correctly send: command: HTTP status code is not 200: {:?}", resp);
+        eprintln!("发送命令失败，HTTP状态码不是200: {:?}", resp);
         exit(1);
     }
-    println!("Successfully flushed disabled jobs");
+    println!("成功刷新已禁用的任务");
     Ok(())
 }
 
@@ -383,15 +381,15 @@ async fn cmd_job(cmd: rtsync::msg::CmdVerb, c: &ArgMatches){
     let client = CLIENT.read().await.clone();
     match rtsync::util::post_json(&url, &client_cmd, Some(client)).await{
         Err(e) => {
-            eprintln!("Failed to correctly send command: {}", e);
+            eprintln!("发送命令失败: {}", e);
             exit(1);
         }
         Ok(resp) => {
             if resp.status() != StatusCode::OK{
-                eprintln!("Failed to correctly send command: HTTP status code is not 200: {:?}", resp);
+                eprintln!("发送命令失败，HTTP状态码不是200: {:?}", resp);
                 exit(1);
             }
-            println!("Successfully send the command");
+            println!("成功发送命令");
         }
     }
 }
@@ -407,15 +405,15 @@ async fn cmd_worker(cmd: rtsync::msg::CmdVerb, c: &ArgMatches){
     let client = CLIENT.read().await.clone();
     match rtsync::util::post_json(&url, &cmd, Some(client)).await {
         Err(e) => {
-            eprintln!("Failed to correctly send command: {}", e);
+            eprintln!("发送命令失败: {}", e);
             exit(1);
         },
         Ok(resp) => {
             if resp.status() != StatusCode::OK{
-                eprintln!("Failed to correctly send command: HTTP status code is not 200: {:?}", resp);
+                eprintln!("发送命令失败，HTTP状态码不是200: {:?}", resp);
                 exit(1);
             }
-            println!("Successfully send the command");
+            println!("成功发送命令");
         }
     }
 }

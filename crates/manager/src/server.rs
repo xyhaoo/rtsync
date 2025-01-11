@@ -1,14 +1,12 @@
-use std::sync::{Arc, RwLock};
-use chrono::{DateTime, Utc};
+use std::sync::RwLock;
+use chrono::Utc;
 use reqwest::Client;
-// use lazy_static::lazy_static;
 use crate::config::Config;
-use rocket::{Build, Ignite, Rocket, State};
+use rocket::{Build, Rocket, State};
 use internal::util::{create_http_client, post_json};
 use crate::db::{make_db_adapter, DbAdapter};
 
 use rocket::http::Status;
-use rocket::response::content;
 use rocket::serde::json::Json;
 use rocket::serde::{Serialize, Deserialize};
 use internal::{
@@ -19,7 +17,6 @@ use internal::msg::{ClientCmd, CmdVerb, MirrorSchedules, WorkerCmd, WorkerStatus
 use internal::status::SyncStatus::{Disabled, Failed, Paused, PreSyncing, Success, Syncing};
 use internal::status_web::build_web_mirror_status;
 use crate::middleware::{CheckWorkerId, ContextErrorLogger};
-use crate::server;
 
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -77,7 +74,7 @@ pub fn get_rtsync_manager(cfg: &Config) -> Result<Manager, String>{
         if !db_file.is_empty() && !db_type.is_empty(){
             match make_db_adapter(db_type, db_file) {
                 Ok(adapter) => {
-                    s.engine = s.engine.manage(Box::new(adapter));
+                    s.engine = s.engine.manage(Box::new(adapter) as Box<dyn DbAdapter>);
                 }
                 Err(e) => {
                     let err = format!("初始化数据库适配器(db adapter)失败: {}", e);
@@ -108,44 +105,49 @@ pub fn get_rtsync_manager(cfg: &Config) -> Result<Manager, String>{
 }
 
 #[get("/ping")]
-pub(crate) async fn ping() -> (Status, Json<Response>) {
-    (Status::Ok, Json(Response::Message("pong".to_string())))
+pub(crate) async fn ping() -> Json<Response> {
+    Json(Response::Message("pong".into()))
 }
 
 // list_all_jobs返回指定worker的所有job
 #[get("/jobs")]
-async fn list_all_jobs(engine: &State<Box<dyn DbAdapter>>) -> (Status, Json<Result<Vec<WebMirrorStatus>, Response>>) {
+async fn list_all_jobs(engine: &State<Box<dyn DbAdapter>>) 
+    -> Result<Json<Vec<WebMirrorStatus>>, (Status, Json<Response>)> 
+{
     match engine.list_all_mirror_states(){
         Ok(mirror_status_list) => {
             let mut web_mir_status_list: Vec<WebMirrorStatus> = vec![];
             for m in mirror_status_list{
                 web_mir_status_list.push(build_web_mirror_status(m))
             }
-            (Status::Ok, Json(Ok(web_mir_status_list)))
+            Ok(Json(web_mir_status_list))
         },
         Err(e) => {
             let error = format!("在列出所有的镜像的过程中失败：{}", e);
             error!("{}", error);
-            (Status::InternalServerError, Json(Err(Response::Error (error))))
+            Err((Status::InternalServerError, Json(Response::Error(error))))
         }
     }
-
 }
 
 // flush_disabled_jobs删除所有被标记为deleted的job
 #[delete("/jobs/disabled")]
-async fn flush_disabled_jobs(adapter: &State<Box<dyn DbAdapter>>) -> (Status, Json<Result<Response, Response>>){
+async fn flush_disabled_jobs(adapter: &State<Box<dyn DbAdapter>>) 
+    -> Result<Json<Response>, (Status, Json<Response>)>
+{
     if let Err(e) = adapter.flush_disabled_jobs(){
         let error = format!("未能刷新已禁用的jobs：{}", e);
         error!("{}", error);
-        return (Status::InternalServerError, Json(Err(Response::Error (error))))
+        return Err((Status::InternalServerError, Json(Response::Error(error))))
     }
-    (Status::Ok, Json(Ok(Response::Message ("flushed".to_owned()))))
+    Ok(Json(Response::Message ("flushed".into())))
 }
 
 // list_workers使用所有worker的信息进行响应
 #[get("/workers")]
-async fn list_workers(adapter: &State<Box<dyn DbAdapter>>) -> (Status, Json<Result<Vec<WorkerStatus>, Response>>){
+async fn list_workers(adapter: &State<Box<dyn DbAdapter>>) 
+    -> Result<Json<Vec<WorkerStatus>>, (Status, Json<Response>)>
+{
     let mut worker_infos: Vec<WorkerStatus> = vec![];
     match adapter.list_workers() {
         Ok(workers) => {
@@ -158,83 +160,96 @@ async fn list_workers(adapter: &State<Box<dyn DbAdapter>>) -> (Status, Json<Resu
                     last_register: w.last_register,
                 });
             };
-            (Status::Ok, Json(Ok(worker_infos)))
+            Ok(Json(worker_infos))
         }
         Err(e) => {
             let error = format!("在列出所有的worker的过程中失败：{}", e);
             error!("{}", error);
-            (Status::InternalServerError, Json(Err(Response::Error (error))))
+            Err((Status::InternalServerError, Json(Response::Error(error))))
         }
     }
 }
 
 // register_worker注册一个新在线的worker
 #[post("/workers", format = "application/json", data = "<worker>")]
-async fn register_worker(mut worker: Json<WorkerStatus>, adapter: &State<Box<dyn DbAdapter>>) -> (Status, Json<Result<WorkerStatus, Response>>){
+async fn register_worker(mut worker: Json<WorkerStatus>, adapter: &State<Box<dyn DbAdapter>>) 
+    -> Result<Json<WorkerStatus>, (Status, Json<Response>)>
+{
     worker.last_online = Utc::now();
     worker.last_register = Utc::now();
     match adapter.create_worker(worker.into_inner()){
         Ok(new_worker) => {
             info!("注册了Worker: {}",new_worker.id);
-            (Status::Ok, Json(Ok(new_worker)))
+            Ok(Json(new_worker))
         }
         Err(e) => {
             let error = format!("注册worker失败：{}", e);
             error!("{}", error);
-            (Status::InternalServerError, Json(Err(Response::Error (error))))
+            Err((Status::InternalServerError, Json(Response::Error(error))))
         }
     }
 }
 
 // delete_worker根据worker_id删除一个worker
 #[delete("/workers/<id>")]
-async fn delete_worker(id: &str, guard: Result<CheckWorkerId, Json<Response>>, adapter: &State<Box<dyn DbAdapter>>) -> (Status, Json<Response>){
+async fn delete_worker(id: &str, 
+                       guard: Result<CheckWorkerId, Json<Response>>, 
+                       adapter: &State<Box<dyn DbAdapter>>) 
+    -> Result<Json<Response>, (Status, Json<Response>)>
+{
     if let Err(e) = guard{
-        return (Status::BadRequest, e)
+        return Err((Status::BadRequest, e))
     }
     match adapter.delete_worker(id) {
         Ok(_) => {
             info!("删除了worker，id为{}",id);
-            (Status::Ok, Json(Response::Message ("deleted".to_owned())))
+            Ok(Json(Response::Message ("deleted".to_owned())))
         }
         Err(e) => {
             let error = format!("删除worker失败：{}", e);
             error!("{}", error);
-            (Status::InternalServerError, Json(Response::Error (error)))
+            Err((Status::InternalServerError, Json(Response::Error(error))))
         }
     }
 }
 
 // list_jobs_of_worker返回指定worker的所有同步任务
 #[get("/workers/<id>/jobs")]
-async fn list_jobs_of_worker(id: &str, guard: Result<CheckWorkerId, Json<Response>>, adapter: &State<Box<dyn DbAdapter>>) -> (Status, Json<Result<Vec<MirrorStatus>, Response>>){
+async fn list_jobs_of_worker(id: &str, 
+                             guard: Result<CheckWorkerId, Json<Response>>, 
+                             adapter: &State<Box<dyn DbAdapter>>) 
+    -> Result<Json<Vec<MirrorStatus>>, (Status, Json<Response>)>
+{
     if let Err(e) = guard{
-        let e = e.into_inner();
-        return (Status::BadRequest, Json(Err(e)))
+        return Err((Status::BadRequest, e))
     }
     match adapter.list_mirror_states(id) {
         Ok(mirror_status_list) => {
-            (Status::Ok, Json(Ok(mirror_status_list)))
+            Ok(Json(mirror_status_list))
         },
         Err(e) => {
             let error = format!("在列出worker_id为{}的worker的所有job时失败：{}", id, e);
             error!("{}", error);
-            (Status::InternalServerError, Json(Err(Response::Error (error))))
-        
+            Err((Status::InternalServerError, Json(Response::Error(error))))
         }
     }
 }
 
 #[post("/workers/<id>/jobs/<_job>", format = "application/json", data = "<status>")]
-async fn update_job_of_worker(id: &str, _job: &str, guard: Result<CheckWorkerId, Json<Response>>, mut status: Json<MirrorStatus>, adapter: &State<Box<dyn DbAdapter>>) -> (Status, Json<Result<MirrorStatus, Response>>){
+async fn update_job_of_worker(id: &str, 
+                              _job: &str, 
+                              guard: Result<CheckWorkerId, Json<Response>>, 
+                              mut status: Json<MirrorStatus>, 
+                              adapter: &State<Box<dyn DbAdapter>>) 
+    -> Result<Json<MirrorStatus>, (Status, Json<Response>)>
+{
     if let Err(e) = guard{
-        let e = e.into_inner();
-        return (Status::BadRequest, Json(Err(e)))
+        return Err((Status::BadRequest, e))
     }
     
     let mirror_name = status.name.clone();
     if mirror_name.len() == 0{
-        return (Status::BadRequest, Json(Err(Response::Error ("镜像名为空".to_string()))))
+        return Err((Status::BadRequest, Json(Response::Error ("镜像名为空".to_string()))))
     }
     let _ = adapter.refresh_worker(id);
     let cur_status = adapter.get_mirror_status(id, &mirror_name).unwrap_or_default();
@@ -276,12 +291,12 @@ async fn update_job_of_worker(id: &str, _job: &str, guard: Result<CheckWorkerId,
 
     match adapter.update_mirror_status(id, &mirror_name, status.into_inner()){
         Ok(new_status) => {
-            (Status::Ok, Json(Ok(new_status)))
+            Ok(Json(new_status))
         }
         Err(e) => {
             let error = format!("更新任务 {} 失败，所属worker {} :{}", mirror_name, id, e);
             error!("{}", error);
-            (Status::InternalServerError, Json(Err(Response::Error (error))))
+            Err((Status::InternalServerError, Json(Response::Error(error))))
         }
     }
 
@@ -293,10 +308,15 @@ pub(crate) struct SizeMsg{
     pub(crate) size: String,
 }
 #[post("/workers/<id>/jobs/<_job>/size", format = "application/json", data = "<msg>")]
-async fn update_mirror_size(id: &str, _job: &str, guard: Result<CheckWorkerId, Json<Response>>, msg: Json<SizeMsg>, adapter: &State<Box<dyn DbAdapter>>) -> (Status, Json<Result<MirrorStatus,Response>>){
+async fn update_mirror_size(id: &str, 
+                            _job: &str, 
+                            guard: Result<CheckWorkerId, Json<Response>>, 
+                            msg: Json<SizeMsg>, 
+                            adapter: &State<Box<dyn DbAdapter>>) 
+    -> Result<Json<MirrorStatus>, (Status, Json<Response>)>
+{
     if let Err(e) = guard{
-        let e = e.into_inner();
-        return (Status::BadRequest, Json(Err(e)))
+        return Err((Status::BadRequest, e))
     }
     let mirror_name = msg.name.clone();
     let _ = adapter.refresh_worker(id);
@@ -304,7 +324,7 @@ async fn update_mirror_size(id: &str, _job: &str, guard: Result<CheckWorkerId, J
         Err(e) => {
             let error = format!("获取镜像{} @<{}>的状态失败:{}", mirror_name, id, e);
             error!("{}", error);
-            (Status::InternalServerError, Json(Err(Response::Error (error))))
+            Err((Status::InternalServerError, Json(Response::Error(error))))
         }
         Ok(mut status) => {
             // 只有大小有意义的消息才会更新镜像大小
@@ -315,12 +335,12 @@ async fn update_mirror_size(id: &str, _job: &str, guard: Result<CheckWorkerId, J
 
             match adapter.update_mirror_status(id, &mirror_name, status) {
                 Ok(new_status) => {
-                    (Status::Ok, Json(Ok(new_status)))
+                    Ok(Json(new_status))
                 }
                 Err(e) => {
                     let error = format!("更新任务 {} 失败，所属worker {} :{}", mirror_name, id, e);
                     error!("{}", error);
-                    (Status::InternalServerError, Json(Err(Response::Error (error))))
+                    Err((Status::InternalServerError, Json(Response::Error(error))))
                 }
             }
         }
@@ -330,17 +350,21 @@ async fn update_mirror_size(id: &str, _job: &str, guard: Result<CheckWorkerId, J
 
 // 更新worker同步任务的同步时间
 #[post("/workers/<id>/schedules", format = "application/json", data = "<schedules>")]
-async fn update_schedules_of_worker(id: &str, guard: Result<CheckWorkerId, Json<Response>>, schedules: Json<MirrorSchedules>, adapter: &State<Box<dyn DbAdapter>>) -> (Status, Json<Result<(),Response>>){
+async fn update_schedules_of_worker(id: &str, 
+                                    guard: Result<CheckWorkerId, Json<Response>>, 
+                                    schedules: Json<MirrorSchedules>, 
+                                    adapter: &State<Box<dyn DbAdapter>>) 
+    -> Result<Json<()>, (Status, Json<Response>)>
+{
     if let Err(e) = guard{
-        let e = e.into_inner();
-        return (Status::BadRequest, Json(Err(e)))
+        return Err((Status::BadRequest, e))
     }
     for schedule in schedules.into_inner().schedules{
         let mirror_name = schedule.mirror_name;
         if mirror_name.len() == 0{
             let error = "镜像名为空".to_string();
             error!("{}", error);
-            return (Status::BadRequest, Json(Err(Response::Error (error))));
+            return Err((Status::BadRequest, Json(Response::Error(error))))
         }
 
         let _ = adapter.refresh_worker(id);
@@ -360,31 +384,35 @@ async fn update_schedules_of_worker(id: &str, guard: Result<CheckWorkerId, Json<
                 if let Err(e) = adapter.update_mirror_status(id, &mirror_name, cur_status){
                     let error = format!("更新任务 {} 失败，所属worker {} :{}", mirror_name, id, e);
                     error!("{}", error);
-                    return (Status::InternalServerError, Json(Err(Response::Error (error))));
+                    return Err((Status::InternalServerError, Json(Response::Error(error))))
                 }
             }
         }
     }
 
-    (Status::Ok, Json(Ok(())))
+    Ok(Json(()))
 }
 
 #[post("/cmd", format = "application/json", data = "<client_cmd>")]
-async fn handle_client_cmd(client_cmd: Json<ClientCmd>, adapter: &State<Box<dyn DbAdapter>>, client: &State<Client>) -> (Status, Json<Response>){
+async fn handle_client_cmd(client_cmd: Json<ClientCmd>, 
+                           adapter: &State<Box<dyn DbAdapter>>, 
+                           client: &State<Client>) 
+    -> Result<Json<Response>, (Status, Json<Response>)>
+{
     let client_cmd = client_cmd.into_inner();
     let worker_id = client_cmd.worker_id.clone();
     if worker_id.len() == 0{
         // TODO：当worker_id为空字符串时，决定哪个worker应该执行此镜像
         let error = "worker_id为空的情况还未实现".to_string();
         error!("{}", error);
-        return (Status::InternalServerError, Json(Response::Error (error )))
+        return Err((Status::InternalServerError, Json(Response::Error(error))))
     }
     
     let w = adapter.get_worker(&worker_id);
     if let Err(e) = w {
         let error = format!("worker{}还未注册", worker_id);
         error!("{}", error);
-        return (Status::BadRequest, Json(Response::Error (error )))
+        return Err((Status::BadRequest, Json(Response::Error(error))))
     }
     
     let w = w.unwrap();
@@ -419,10 +447,10 @@ async fn handle_client_cmd(client_cmd: Json<ClientCmd>, adapter: &State<Box<dyn 
     if let Err(e) = post_json(&worker_url, &worker_cmd, Some(http_client)).await{
         let error = format!("为worker {}({}) 发送命令失败：{}", worker_id, worker_url, e.to_string());
         error!("{}", error);
-        return (Status::InternalServerError, Json(Response::Error (error)))
+        return Err((Status::InternalServerError, Json(Response::Error(error))))
     }
     // TODO: 检查响应是否成功
-    (Status::Ok, Json(Response::Message(format!("成功发送命令到worker {}", worker_id))))
+    Ok(Json(Response::Message(format!("成功发送命令到worker {}", worker_id))))
 }
 
 

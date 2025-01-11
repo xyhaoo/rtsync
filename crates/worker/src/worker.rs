@@ -371,7 +371,7 @@ impl Worker {
                     // 任务的同步状态只有在它运行时才有意义。
                     // 如果任务被暂停或禁用，则会发出同步失败信号，需要忽略该信号
                     self.update_status(&job, &job_msg).await;
-                    
+
                     // 只有同步任务成功或失败时发送的schedule信号（都为true）才会触发该任务的下一次同步调度
                     if job_msg.schedule {
                         let schedule_time = Utc::now() + job.provider.interval().await;
@@ -536,14 +536,16 @@ impl Worker {
 
 // 处理从manager服务器发送来的控制信号
 #[post("/", format = "application/json", data = "<cmd>")]
-async fn handle_cmd_from_manager(cmd: Json<WorkerCmd>, w: &State<WorkerManager>) -> (Status, Json<Response>) {
+async fn handle_cmd_from_manager(cmd: Json<WorkerCmd>, w: &State<WorkerManager>) 
+    -> Result<Json<Response>, (Status, Json<Response>)> 
+{
     let lock = w.l.lock().await;
     defer!{
         drop(lock);
     }
     let cmd = cmd.into_inner();
     info!("收到命令: {}", cmd);
-    
+
     // 对于worker的命令
     if cmd.mirror_id.is_empty(){
         match cmd.cmd{
@@ -553,17 +555,15 @@ async fn handle_cmd_from_manager(cmd: Json<WorkerCmd>, w: &State<WorkerManager>)
                 kill(Pid::from_raw(pid), Signal::SIGHUP).unwrap();
             },
             _ => {
-                return (Status::NotAcceptable, Json(Response {msg: "无效的命令".to_string()}));
+                return Err((Status::NotAcceptable, Json(Response {msg: "无效的命令".to_string()})));
             }
         }
     }
 
     // 对于job的命令
-    // FIXME: client发送post请求后等待结果，然而请求的处理过程因为等待w.jobs.lock()而阻塞，超过了client等待结果返回的时间
-    // FIXME: 现在把锁改为RwLock，避免死锁，但因每个函数上锁种类不同，可能会导致其他问题
     match w.jobs.read().await.get(&cmd.mirror_id){
         None => {
-            (Status::NotFound, Json(Response {msg: format!("镜像 '{}' 未找到", cmd.mirror_id)}))
+            Err((Status::NotFound, Json(Response {msg: format!("镜像 '{}' 未找到", cmd.mirror_id)})))
         }
         Some(job) => {
             // 不管收到什么信号，首先要刷新同步队列
@@ -571,7 +571,7 @@ async fn handle_cmd_from_manager(cmd: Json<WorkerCmd>, w: &State<WorkerManager>)
             let mut jobs_lock = w.schedule.jobs.lock().await;
             w.schedule.remove(&*job.name(), &mut list_lock, &mut jobs_lock);
             drop((list_lock, jobs_lock));
-            
+
             // 如果收到的是开始同步信号，且这个job当前被禁用，先将其启动
             match cmd.cmd {
                 CmdVerb::Start | CmdVerb::Restart => {
@@ -613,11 +613,11 @@ async fn handle_cmd_from_manager(cmd: Json<WorkerCmd>, w: &State<WorkerManager>)
                     // empty
                 },
                 _ => {
-                    return (Status::NotAcceptable, Json(Response {msg: "无效的命令".to_string()}));
+                    return Err((Status::NotAcceptable, Json(Response {msg: "无效的命令".to_string()})));
                 }
             }
 
-            (Status::Ok, Json(Response {msg: "OK".to_string()}))
+            Ok(Json(Response {msg: "OK".to_string()}))
         }
     }
 

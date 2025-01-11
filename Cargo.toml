@@ -29,14 +29,29 @@ bench = false
 name = "rtsynctl_autocomplete"
 path = "crates/core/cmd/rtsynctl/build.rs"
 
+#################################################
+[[bin]]
+bench = false
+name = "manager_main"
+path = "tests/manager_main.rs"
+
+[[bin]]
+bench = false
+name = "http_client"
+path = "tests/http_client.rs"
+
+[[bin]]
+bench = false
+name = "http_server"
+path = "tests/http_server.rs"
+#################################################
+
+
 [workspace]
 members = [
     "crates/internal", 
     "crates/manager", 
-    "crates/worker", 
-
-    
-#    "tests/http_test",
+    "crates/worker",
 ]
 
 [dependencies]

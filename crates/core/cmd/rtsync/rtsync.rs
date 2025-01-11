@@ -22,17 +22,17 @@ async fn start_manager(c: &ArgMatches) -> Result<()> {
     
     match manager::config::load_config(c.get_one::<String>("FILE").cloned(), c){
         Err(e) => { 
-            error!("Error loading config: {}", e);
+            error!("导入config失败: {}", e);
             exit(1);
         },
         Ok(config) => {
             match manager::server::get_rtsync_manager(&config){
                 Err(e) => {
-                    error!("Error initializing RT sync worker.");
+                    error!("初始化 RT sync manager 失败.");
                     exit(1);
                 },
                 Ok(manager) => {
-                    info!("Run rtsync manager server.");
+                    info!("启动 rtsync manager 服务器.");
                     tokio::spawn(async move {
                         manager.run().await;
                     });
@@ -50,13 +50,13 @@ async fn start_worker(c: &ArgMatches) -> Result<()> {
     let config_path = c.get_one::<String>("config").cloned().unwrap();
     match worker::config::load_config(&config_path){
         Err(e) => {
-            error!("Error loading config: {}", e);
+            error!("导入config失败: {}", e);
             exit(1);
         },
         Ok(config) => {
             match worker::worker::Worker::new(config).await {
                 None => {
-                    error!("Error initializing RT sync worker.");
+                    error!("初始化 RT sync worker 失败.");
                     exit(1);
                 },
                 Some(w) => {
@@ -73,7 +73,7 @@ async fn start_worker(c: &ArgMatches) -> Result<()> {
                                 };
                             }
                         }else { 
-                            error!("Invalid profiling path: {}", prof_path);
+                            error!("无效的 profiling 路径: {}", prof_path);
                             exit(1);
                         }
                     }
@@ -86,10 +86,10 @@ async fn start_worker(c: &ArgMatches) -> Result<()> {
                         loop{
                             tokio::select! {
                                 _ = sighup.recv() => {
-                                    info!("Received reload signal");
+                                    info!("收到重载信号");
                                     match worker::config::load_config(&config_path){
                                         Err(e) => {
-                                            error!("Error loading config: {}", e);
+                                            error!("导入config失败: {}", e);
                                         },
                                         Ok(new_cfg) => {
                                             w_clone.reload_mirror_config(new_cfg.mirrors).await;
@@ -106,7 +106,7 @@ async fn start_worker(c: &ArgMatches) -> Result<()> {
                         }
                     });
 
-                    info!("Run rtsync worker.");
+                    info!("运行 rtsync worker.");
                     w.run().await;
                 }
             }
