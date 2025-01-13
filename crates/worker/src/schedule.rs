@@ -14,6 +14,7 @@ pub struct ScheduleQueue {
     pub(crate) jobs: Arc<Mutex<HashMap<String, bool>>>,
 }
 
+#[derive(Debug)]
 pub struct JobScheduleInfo {
     pub job_name: String,
     pub next_scheduled: DateTime<Utc>,

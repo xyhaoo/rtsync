@@ -24,7 +24,7 @@ pub(crate) fn build_cli() -> Command{
                     arg!(-v --verbose "启用详细日志记录"),
                     arg!(--debug "以 debug 模式启动 manager"),
                     Arg::new("with-systemd").long("with-systemd")
-                        .action(ArgAction::Set)
+                        .action(ArgAction::SetFalse)
                         .help("启用系统兼容的日志记录"),
                     arg!(--pidfile <PID_FILE> "使用 `PID_FILE` 作为 manager 的pid文件")
                         .default_value("/run/rtsync/rtsync.manager.pid"),

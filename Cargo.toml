@@ -1,7 +1,7 @@
 [package]
 name = "rtsync"
 authors = ["xiaooyh <xiaooyh@qq.com>"]
-description = ""
+description = "An implementation of tunasync in Rust"
 exclude = [
 
 ]
@@ -37,13 +37,8 @@ path = "tests/manager_main.rs"
 
 [[bin]]
 bench = false
-name = "http_client"
-path = "tests/http_client.rs"
-
-[[bin]]
-bench = false
-name = "http_server"
-path = "tests/http_server.rs"
+name = "worker_main"
+path = "tests/worker_main.rs"
 #################################################
 
 

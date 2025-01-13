@@ -177,7 +177,8 @@ impl CmdProvider{
             
         }else {
             if self.command.len() == 1{
-                cmd_job = CmdJob::new(Command::new(&self.command[0]), working_dir.clone(), env.clone());
+                cmd_job = CmdJob::new(Command::new("bash"), working_dir.clone(), env.clone());
+                { cmd_job.cmd.lock().await.arg(&self.command[0]); }
 
             }else if self.command.len() > 1 {
                 let c = self.command[0].clone();

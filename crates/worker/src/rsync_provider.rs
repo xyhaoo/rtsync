@@ -149,15 +149,10 @@ impl RsyncProvider {
         let working_dir = self.working_dir().await;
         let mut command = Vec::new();
         command.push(self.rsync_config.rsync_cmd.clone());
-        println!("debug：添加了rsync_cmd：{}", self.rsync_config.rsync_cmd.clone());
         command.extend(self.options.as_ref().clone());
-        println!("debug：添加了options：{:?}", self.options.clone());
         command.push(self.rsync_config.upstream_url.clone());
-        println!("debug：添加了upstream_url：{:?}", self.rsync_config.upstream_url.clone());
         command.push(working_dir.clone());
-        println!("debug：添加了working_dir：{:?}", working_dir);
         let env = self.rsync_config.rsync_env.clone();
-        println!("debug：rsync_env ：{:?}", &env);
         
         let cmd_job: CmdJob;
         let mut args: Vec<String> = Vec::new();
@@ -278,14 +273,10 @@ impl MirrorProvider for RsyncProvider  {
     async fn run(&self, started: Sender<Empty>) -> Result<()> {
         { *self.data_size.lock().await = String::new(); }
         
-        println!("debug: 等待启动。。。");
-        
         MirrorProvider::start(self).await?;
         
         started.send(()).await.expect("发送失败");
         
-        println!("debug: 等待结束。。。");
-
         // 获取锁并执行 wait() 操作
         let base_provider = self.base_provider.read().await;
         let result = base_provider.wait().await;
@@ -352,7 +343,6 @@ impl MirrorProvider for RsyncProvider  {
     }
 
     async fn terminate(&self) -> Result<()> {
-        println!("debug: 进入terminate！");
         self.base_provider.read().await.terminate().await
     }
 

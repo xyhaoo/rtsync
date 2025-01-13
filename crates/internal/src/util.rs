@@ -42,7 +42,6 @@ lazy_static! {
 
 pub fn get_tls_config(ca_file: &str) -> Result<Vec<Certificate>, reqwest::Error> {
     let mut buf = Vec::new();
-    println!("debug： ca_file的位置是 {}", ca_file);
     File::open(ca_file)
         .expect("打开文件失败")
         .read_to_end(&mut buf).expect("不能读取该文件");
@@ -147,7 +146,6 @@ pub fn find_all_submatches_in_file(file_name: &str, re: &Regex) -> Result<Vec<Ve
     }
 
     let content = fs::read_to_string(file_name)?;
-    println!("debug: content是: {:?}", content);
     Ok(re.captures_iter(&*content)
            .map(|cap| {
                (0..cap.len())  // 捕获组的数量
@@ -172,7 +170,6 @@ pub fn find_all_submatches_in_file(file_name: &str, re: &Regex) -> Result<Vec<Ve
 pub fn extract_size_from_log(log_file: &str, re: &Regex) -> Option<String> {
     match find_all_submatches_in_file(log_file, re) {
         Ok(matches) if !matches.is_empty() => { 
-            println!("debug: matches: {:?}", matches);
             // 最后一个匹配项的第一个子捕获组
             matches.last().and_then(|m| m.get(1).cloned()) 
         },

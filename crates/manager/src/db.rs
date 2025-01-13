@@ -304,7 +304,7 @@ impl DbAdapter for KvDbAdapter {
                 if value.is_none() {
                     return Err(Box::new(std::io::Error::new(
                         std::io::ErrorKind::Other,
-                        format!("在worker '{}' 里没有镜像 '{}' ", worker_id, mirror_id),
+                        format!("在worker '{}' 里没有镜像任务 '{}' ", worker_id, mirror_id),
                     )));
                 }
 

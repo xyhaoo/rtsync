@@ -242,7 +242,7 @@ pub(crate) async fn new_mirror_provider(mut mirror: MirrorConfig, cfg: Config) -
             #[cfg(not(target_os = "linux"))]
             provider.add_hook(HookType::BtrfsNoLinux(btrfs_snapshot_hook_nolinux::BtrfsSnapshotHook::new(&*snapshot_path, mirror.clone()))).await;
             #[cfg(target_os = "linux")]
-            provider.add_hook(HookType::Btrfs(btrfs_snapshot_hook::BtrfsSnapshotHook::new(&*provider.name().await, &*snapshot_path, mirror.clone()))).await;
+            provider.add_hook(HookType::Btrfs(btrfs_snapshot_hook::BtrfsSnapshotHook::new(&*provider.name(), &*snapshot_path, mirror.clone()))).await;
         }
     }
 

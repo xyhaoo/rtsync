@@ -111,8 +111,8 @@ pub(crate) async fn ping() -> Json<Response> {
 
 // list_all_jobs返回指定worker的所有job
 #[get("/jobs")]
-async fn list_all_jobs(engine: &State<Box<dyn DbAdapter>>) 
-    -> Result<Json<Vec<WebMirrorStatus>>, (Status, Json<Response>)> 
+async fn list_all_jobs(engine: &State<Box<dyn DbAdapter>>)
+    -> Result<Json<Vec<WebMirrorStatus>>, (Status, Json<Response>)>
 {
     match engine.list_all_mirror_states(){
         Ok(mirror_status_list) => {
@@ -132,7 +132,7 @@ async fn list_all_jobs(engine: &State<Box<dyn DbAdapter>>)
 
 // flush_disabled_jobs删除所有被标记为deleted的job
 #[delete("/jobs/disabled")]
-async fn flush_disabled_jobs(adapter: &State<Box<dyn DbAdapter>>) 
+async fn flush_disabled_jobs(adapter: &State<Box<dyn DbAdapter>>)
     -> Result<Json<Response>, (Status, Json<Response>)>
 {
     if let Err(e) = adapter.flush_disabled_jobs(){
@@ -145,7 +145,7 @@ async fn flush_disabled_jobs(adapter: &State<Box<dyn DbAdapter>>)
 
 // list_workers使用所有worker的信息进行响应
 #[get("/workers")]
-async fn list_workers(adapter: &State<Box<dyn DbAdapter>>) 
+async fn list_workers(adapter: &State<Box<dyn DbAdapter>>)
     -> Result<Json<Vec<WorkerStatus>>, (Status, Json<Response>)>
 {
     let mut worker_infos: Vec<WorkerStatus> = vec![];
@@ -172,7 +172,7 @@ async fn list_workers(adapter: &State<Box<dyn DbAdapter>>)
 
 // register_worker注册一个新在线的worker
 #[post("/workers", format = "application/json", data = "<worker>")]
-async fn register_worker(mut worker: Json<WorkerStatus>, adapter: &State<Box<dyn DbAdapter>>) 
+async fn register_worker(mut worker: Json<WorkerStatus>, adapter: &State<Box<dyn DbAdapter>>)
     -> Result<Json<WorkerStatus>, (Status, Json<Response>)>
 {
     worker.last_online = Utc::now();
@@ -192,9 +192,9 @@ async fn register_worker(mut worker: Json<WorkerStatus>, adapter: &State<Box<dyn
 
 // delete_worker根据worker_id删除一个worker
 #[delete("/workers/<id>")]
-async fn delete_worker(id: &str, 
-                       guard: Result<CheckWorkerId, Json<Response>>, 
-                       adapter: &State<Box<dyn DbAdapter>>) 
+async fn delete_worker(id: &str,
+                       guard: Result<CheckWorkerId, Json<Response>>,
+                       adapter: &State<Box<dyn DbAdapter>>)
     -> Result<Json<Response>, (Status, Json<Response>)>
 {
     if let Err(e) = guard{
@@ -215,9 +215,9 @@ async fn delete_worker(id: &str,
 
 // list_jobs_of_worker返回指定worker的所有同步任务
 #[get("/workers/<id>/jobs")]
-async fn list_jobs_of_worker(id: &str, 
-                             guard: Result<CheckWorkerId, Json<Response>>, 
-                             adapter: &State<Box<dyn DbAdapter>>) 
+async fn list_jobs_of_worker(id: &str,
+                             guard: Result<CheckWorkerId, Json<Response>>,
+                             adapter: &State<Box<dyn DbAdapter>>)
     -> Result<Json<Vec<MirrorStatus>>, (Status, Json<Response>)>
 {
     if let Err(e) = guard{
@@ -236,11 +236,11 @@ async fn list_jobs_of_worker(id: &str,
 }
 
 #[post("/workers/<id>/jobs/<_job>", format = "application/json", data = "<status>")]
-async fn update_job_of_worker(id: &str, 
-                              _job: &str, 
-                              guard: Result<CheckWorkerId, Json<Response>>, 
-                              mut status: Json<MirrorStatus>, 
-                              adapter: &State<Box<dyn DbAdapter>>) 
+async fn update_job_of_worker(id: &str,
+                              _job: &str,
+                              guard: Result<CheckWorkerId, Json<Response>>,
+                              mut status: Json<MirrorStatus>,
+                              adapter: &State<Box<dyn DbAdapter>>)
     -> Result<Json<MirrorStatus>, (Status, Json<Response>)>
 {
     if let Err(e) = guard{
@@ -308,11 +308,11 @@ pub(crate) struct SizeMsg{
     pub(crate) size: String,
 }
 #[post("/workers/<id>/jobs/<_job>/size", format = "application/json", data = "<msg>")]
-async fn update_mirror_size(id: &str, 
-                            _job: &str, 
-                            guard: Result<CheckWorkerId, Json<Response>>, 
-                            msg: Json<SizeMsg>, 
-                            adapter: &State<Box<dyn DbAdapter>>) 
+async fn update_mirror_size(id: &str,
+                            _job: &str,
+                            guard: Result<CheckWorkerId, Json<Response>>,
+                            msg: Json<SizeMsg>,
+                            adapter: &State<Box<dyn DbAdapter>>)
     -> Result<Json<MirrorStatus>, (Status, Json<Response>)>
 {
     if let Err(e) = guard{
@@ -350,10 +350,10 @@ async fn update_mirror_size(id: &str,
 
 // 更新worker同步任务的同步时间
 #[post("/workers/<id>/schedules", format = "application/json", data = "<schedules>")]
-async fn update_schedules_of_worker(id: &str, 
-                                    guard: Result<CheckWorkerId, Json<Response>>, 
-                                    schedules: Json<MirrorSchedules>, 
-                                    adapter: &State<Box<dyn DbAdapter>>) 
+async fn update_schedules_of_worker(id: &str,
+                                    guard: Result<CheckWorkerId, Json<Response>>,
+                                    schedules: Json<MirrorSchedules>,
+                                    adapter: &State<Box<dyn DbAdapter>>)
     -> Result<Json<()>, (Status, Json<Response>)>
 {
     if let Err(e) = guard{
@@ -394,9 +394,9 @@ async fn update_schedules_of_worker(id: &str,
 }
 
 #[post("/cmd", format = "application/json", data = "<client_cmd>")]
-async fn handle_client_cmd(client_cmd: Json<ClientCmd>, 
-                           adapter: &State<Box<dyn DbAdapter>>, 
-                           client: &State<Client>) 
+async fn handle_client_cmd(client_cmd: Json<ClientCmd>,
+                           adapter: &State<Box<dyn DbAdapter>>,
+                           client: &State<Client>)
     -> Result<Json<Response>, (Status, Json<Response>)>
 {
     let client_cmd = client_cmd.into_inner();

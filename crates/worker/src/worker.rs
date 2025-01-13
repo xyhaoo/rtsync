@@ -326,7 +326,7 @@ impl Worker {
             }
         }
 
-        // 可能会启动一些不存在于mirror_list中的新同步任务
+        // 可能会启动一些新添加的同步任务，原来不存在于mirror_list
         // 它们也会被安排进worker的调度列表
         for name in unset.keys() {
             let job = self.worker_manager.jobs.read().await.get(name).cloned().unwrap();
@@ -342,12 +342,12 @@ impl Worker {
         drop(lock);
 
         let sched_info = self.worker_manager.schedule.get_jobs().await;
+        info!("sched_info: {:?}", sched_info);
         self.update_sched_info(sched_info).await;
 
         let mut interval = time::interval(time::Duration::from_secs(5));
         let mut manager_chan_rx = self.worker_manager.manager_chan.1.lock().await;
         let mut exit_lock = self.exit.1.lock().await;
-        let mut i = 1;
         loop {
             tokio::select! {
                 Some(job_msg) = manager_chan_rx.recv() => {
@@ -362,8 +362,7 @@ impl Worker {
                     }
                     let job = job.unwrap();
                     let job_state = job.state();
-                    println!("hehehe{i}");
-                    i+=1;
+
                     if (job_state != JobState::Ready) && (job_state != JobState::Halting){
                         info!("任务 {} 不是就绪状态，直到其状态被改变，不再为其安排新的同步时间", job_msg.name);
                         continue;
@@ -468,9 +467,7 @@ impl Worker {
             error_msg: job_msg.msg.clone(),
             ..MirrorStatus::default()
         };
-
-        println!("debug: {:?}", smsg);
-
+        
         //某些提供商（例如rsync）可能知道镜像的大小
         // 所以我们在这里报告给Manager
         let size_lock = job.size.lock().await;

@@ -20,7 +20,7 @@ async fn start_manager(c: &ArgMatches) -> Result<()> {
                                 c.get_flag("debug"), 
                                 c.get_flag("with-systemd"));
     
-    match manager::config::load_config(c.get_one::<String>("FILE").cloned(), c){
+    match manager::config::load_config(c.get_one::<String>("config").cloned(), c){
         Err(e) => { 
             error!("导入config失败: {}", e);
             exit(1);

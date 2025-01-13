@@ -31,7 +31,6 @@ mod tests {
     }
 
     fn get_docker_by_name(name: String) -> Result<String, Box<dyn std::error::Error>>{
-        println!("debug: name是{name}");
         match Command::new("docker")
             // .arg("docker")
             .arg("ps").arg("-a")
@@ -40,7 +39,6 @@ mod tests {
             .output()
         {
             Ok(output) => {
-                println!("debug: output是{output:?}");
                 Ok(std::str::from_utf8(&output.stdout).unwrap().into())
             }
             Err(e) =>{

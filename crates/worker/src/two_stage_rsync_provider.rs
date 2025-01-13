@@ -196,7 +196,7 @@ impl TwoStageRsyncProvider {
         if let Some(d) = base_provider_lock.docker_ref().as_ref(){
             let c = "docker";
             args.extend(vec!["run".to_string(), "--rm".to_string(),
-                             "-a".to_string(), "STDOUT".to_string(), "-a".to_string(), "STDERR".to_string(),
+                             // "-a".to_string(), "STDOUT".to_string(), "-a".to_string(), "STDERR".to_string(),
                              "--name".to_string(), d.name(base_provider_lock.name().parse().unwrap()),
                              "-w".to_string(), working_dir.clone()]);
             // 指定用户
@@ -231,8 +231,8 @@ impl TwoStageRsyncProvider {
         }else {
             if cmd_and_args.len() == 1{
                 // cmd修改与rsync_provider相同
-                cmd_job = CmdJob::new(Command::new(&cmd_and_args[0]), working_dir.clone(), env.clone());
-                // { cmd_job.cmd.lock().await.arg(&cmd_and_args[0]); }
+                cmd_job = CmdJob::new(Command::new("bash"), working_dir.clone(), env.clone());
+                { cmd_job.cmd.lock().await.arg(&cmd_and_args[0]); }
 
             }else if cmd_and_args.len() > 1 {
                 // cmd修改与rsync_provider相同
@@ -325,7 +325,6 @@ impl MirrorProvider for TwoStageRsyncProvider {
             
             base_provider_lock.is_running.store(true, Ordering::Release);
             
-            println!("debug: 将is_running字段设置为true :{}", base_provider_lock.name());
             debug!("将is_running字段设置为true :{}", base_provider_lock.name());
 
             // { started.send(()).await.expect("无法发送"); }
@@ -360,7 +359,6 @@ impl MirrorProvider for TwoStageRsyncProvider {
     }
 
     async fn terminate(&self) -> Result<()> {
-        println!("debug: 进入terminate！");
         self.base_provider.read().await.terminate().await
     }
 
