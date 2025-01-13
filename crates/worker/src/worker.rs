@@ -84,19 +84,23 @@ impl Worker {
         }
         let mut http_client = Client::new();
         let concurrent = cfg.global.concurrent.unwrap();
-        if let Some(ca_cert) = cfg.manager.ca_cert.as_ref(){
-            if !ca_cert.is_empty(){
-                match create_http_client(Some(ca_cert)){
-                    Ok(client) => {
-                        http_client = client;
-                    }
-                    Err(e) => {
-                        error!("初始化http 客户端失败: {}", e);
-                        return None;
-                    }
-                }
+
+        let ca_cert = cfg.manager.ca_cert.as_deref().filter(|s| !s.is_empty());
+        let client_result = match ca_cert {
+            Some(cert) => create_http_client(Some(cert)),
+            None => create_http_client(None),
+        };
+        match client_result {
+            Ok(client) => {
+                http_client = client;
+            }
+            Err(e) => {
+                let err = format!("初始化http 客户端失败: {}", e);
+                log::error!("{}", err);
+                return None;
             }
         }
+        
         let (tx, rx) = channel(1);
         let tx = Some(tx);
         let worker_manager = WorkerManager::new(32, concurrent as usize);

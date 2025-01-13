@@ -56,20 +56,23 @@ pub fn get_rtsync_manager(cfg: &Config) -> Result<Manager, String>{
         cfg: cfg.clone(),
         engine: Rocket::build(),
     };
-    if let Some(ca_cert) = &cfg.files.ca_cert{
-        if !ca_cert.is_empty(){
-            match create_http_client(Some(ca_cert)){
-                Ok(client) => {
-                    s.engine = s.engine.manage(client);
-                }
-                Err(e) => {
-                    let err = format!("初始化http 客户端失败: {}", e);
-                    log::error!("{}", err);
-                    return Err(err);
-                }
-            }
+
+    let ca_cert = cfg.files.ca_cert.as_deref().filter(|s| !s.is_empty());
+    let client_result = match ca_cert {
+        Some(cert) => create_http_client(Some(cert)),
+        None => create_http_client(None),
+    };
+    match client_result {
+        Ok(client) => {
+            s.engine = s.engine.manage(client);
+        }
+        Err(e) => {
+            let err = format!("初始化http 客户端失败: {}", e);
+            log::error!("{}", err);
+            return Err(err);
         }
     }
+    
     if let (Some(db_type), Some(db_file)) = (&cfg.files.db_type, &cfg.files.db_file){
         if !db_file.is_empty() && !db_type.is_empty(){
             match make_db_adapter(db_type, db_file) {
@@ -83,6 +86,8 @@ pub fn get_rtsync_manager(cfg: &Config) -> Result<Manager, String>{
                 }
             }
         }
+    }else { 
+        return Err("数据库类型和数据库文件需要指定".into())
     }
 
     s.engine = s.engine.attach(ContextErrorLogger);
