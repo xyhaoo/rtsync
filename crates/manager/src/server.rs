@@ -35,14 +35,18 @@ impl Manager {
     pub async fn run(mut self){
         let mut figment = self.engine.figment().clone();
         if let (Some(addr), Some(port)) = (self.cfg.server.addr, self.cfg.server.port){
-            figment = figment
-                .merge((rocket::Config::PORT, port))
-                .merge((rocket::Config::ADDRESS, addr))
+            if !addr.is_empty() {
+                figment = figment
+                    .merge((rocket::Config::PORT, port))
+                    .merge((rocket::Config::ADDRESS, addr))
+            }
         }
         if let (Some(cert), Some(key)) = (self.cfg.server.ssl_cert, self.cfg.server.ssl_key){
-            figment = figment
-                .merge(("tls.certs", cert))
-                .merge(("tls.key", key));
+            if !cert.is_empty() && !key.is_empty() {
+                figment = figment
+                    .merge(("tls.certs", cert))
+                    .merge(("tls.key", key));
+            }
         }
         self.engine = self.engine.configure(figment);
         

@@ -11,6 +11,7 @@ use tokio::sync::{Mutex, MutexGuard, RwLock, Semaphore};
 use internal::msg::{CmdVerb, MirrorSchedule, MirrorSchedules, MirrorStatus, WorkerCmd, WorkerStatus};
 use internal::util::{create_http_client, get_json, post_json};
 use libc::getpid;
+use nix::NixPath;
 use nix::sys::signal::{kill, Signal};
 use rocket::http::Status;
 use rocket::serde::Serialize;
@@ -271,14 +272,18 @@ impl Worker {
         let mut figment = rocket.figment().clone();
         let cfg_lock = self.cfg.read().await;
         if let (Some(addr), Some(port)) = (cfg_lock.server.listen_addr.as_ref(), cfg_lock.server.listen_port.as_ref()){
-            figment = figment
-                .merge((rocket::Config::PORT, port))
-                .merge((rocket::Config::ADDRESS, addr))
+            if !addr.is_empty(){
+                figment = figment
+                    .merge((rocket::Config::PORT, port))
+                    .merge((rocket::Config::ADDRESS, addr))
+            }
         }
         if let (Some(cert), Some(key)) = (cfg_lock.server.ssl_cert.as_ref(), cfg_lock.server.ssl_key.as_ref()){
-            figment = figment
-                .merge(("tls.certs", cert))
-                .merge(("tls.key", key));
+            if !cert.is_empty() && !key.is_empty(){
+                figment = figment
+                    .merge(("tls.certs", cert))
+                    .merge(("tls.key", key));
+            }
         }
         rocket = rocket.configure(figment);
         rocket

@@ -202,8 +202,8 @@ impl RsyncProvider {
             if command.len() == 1{
                 // 已证实：ubuntu22.04上如果直接使用脚本文件运行Command则会Text file busy，用bash来运行避免文件阻塞
                 // 正常运行时cmd: Command::new(&command[0])，把下面cmd_job.cmd.arg(&command[0]);删除
-                cmd_job = CmdJob::new(Command::new("bash"), working_dir.clone(), env.clone());
-                { cmd_job.cmd.lock().await.arg(&command[0]); }
+                cmd_job = CmdJob::new(Command::new(&command[0]), working_dir.clone(), env.clone());
+                // { cmd_job.cmd.lock().await.arg(&command[0]); }
                 
             }else if command.len() > 1 {
                 // 已证实：ubuntu22.04上如果直接使用脚本文件运行Command则会Text file busy，用bash来运行避免文件阻塞
@@ -211,11 +211,11 @@ impl RsyncProvider {
                 let c = command[0].clone();
                 let args = command[1..].to_vec();
 
-                cmd_job = CmdJob::new(Command::new("bash"), working_dir.clone(), env.clone());
+                cmd_job = CmdJob::new(Command::new(c), working_dir.clone(), env.clone());
                 {
                     cmd_job.cmd
                         .lock().await
-                        .arg(c)
+                        // .arg(c)
                         .args(&args);
                 }
                 

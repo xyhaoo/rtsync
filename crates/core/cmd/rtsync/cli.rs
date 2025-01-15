@@ -40,13 +40,12 @@ pub(crate) fn build_cli() -> Command{
                     arg!(-v --verbose "启用详细日志记录"),
                     arg!(--debug "以 debug 模式启动 worker"),
                     Arg::new("with-systemd").long("with-systemd")
-                        .action(ArgAction::Set)
+                        .action(ArgAction::SetFalse)
                         .help("启用系统兼容的日志记录"),
                     arg!(--pidfile <PID_FILE> "使用 `PID_FILE` 作为 worker 的pid文件")
                         .default_value("/run/rtsync/rtsync.worker.pid"),
                     Arg::new("prof-path").long("prof-path")
                         .value_name("PROF_PATH").action(ArgAction::Set)
-                        .default_value("")
                         .help("启用性能分析，将结果保存到 `PROF_FILE`"),
                 ])
                 .arg_required_else_help(false)

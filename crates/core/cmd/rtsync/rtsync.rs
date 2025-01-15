@@ -35,7 +35,7 @@ async fn start_manager(c: &ArgMatches) -> Result<()> {
                     info!("启动 rtsync manager 服务器.");
                     tokio::spawn(async move {
                         manager.run().await;
-                    });
+                    }).await?;
                 }
             }
         }
@@ -60,20 +60,20 @@ async fn start_worker(c: &ArgMatches) -> Result<()> {
                     exit(1);
                 },
                 Some(w) => {
-                    if let Some(prof_path) = c.get_one::<String>("prof-path"){
-                        if std::path::Path::new(prof_path).is_dir(){
-                            let guard = ProfilerGuard::new(100).unwrap();
+                    if let Some(path) = c.get_one::<String>("prof-path"){
+                        if std::path::Path::new(&path).is_dir(){
+                            let guard = ProfilerGuard::new(100)?;
                             defer!{
                                 if let Ok(report) = guard.report().build() {
-                                    let mut file = File::create(format!("{prof_path}/profile.pb")).unwrap();
+                                    let mut file = File::create(format!("{path}/profile.pb")).unwrap();
                                     let profile = report.pprof().unwrap();
                                     let mut content = Vec::new();
                                     profile.encode(&mut content).unwrap();
                                     file.write_all(&content).unwrap();
                                 };
                             }
-                        }else { 
-                            error!("无效的 profiling 路径: {}", prof_path);
+                        }else {
+                            error!("无效的 profiling 路径: {}", path);
                             exit(1);
                         }
                     }
