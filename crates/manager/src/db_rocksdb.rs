@@ -1,7 +1,6 @@
 use std::collections::HashMap;
-use rocksdb::{DB, IteratorMode, Options};
+use rocksdb::DB;
 use std::error::Error;
-use std::sync::Arc;
 use crate::db::KvAdapter;
 
 pub struct RocksDbAdapter {
@@ -9,7 +8,7 @@ pub struct RocksDbAdapter {
 }
 
 impl KvAdapter for RocksDbAdapter {
-    fn init_bucket(&self, bucket: &str) -> Result<(), Box<dyn Error>> {
+    fn init_bucket(&self, _bucket: &str) -> Result<(), Box<dyn Error>> {
         Ok(())
     }
 

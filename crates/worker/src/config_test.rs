@@ -1,6 +1,5 @@
 #[cfg(test)]
 mod tests {
-    use std::any::{Any, TypeId};
     use std::collections::HashMap;
     use std::fs;
     use std::fs::File;
@@ -283,7 +282,6 @@ use_ipv6 = true
     }
 
     use crate::provider::{new_mirror_provider, MirrorProvider};
-    use crate::two_stage_rsync_provider::TwoStageRsyncProvider;
 
     #[tokio::test]
     async fn test_valid_provider(){
@@ -416,6 +414,6 @@ use_ipv6 = true
         assert_eq!(p.log_file().await, "/var/log/rtsync/debian-cd/latest.log");
         assert_eq!(p.r#type(), Rsync);
         assert_eq!(p.working_dir().await, "/data/mirrors/debian-cd");
-        assert_eq!(p.timeout().await, Duration::seconds(86400));
+        assert_eq!(p.timeout(), Duration::seconds(86400));
     }
 }

@@ -1,24 +1,20 @@
 use anyhow::{anyhow, Result};
-use std::ffi::OsStr;
 use std::fmt::Debug;
 use std::fs::{File, OpenOptions};
-use std::future::IntoFuture;
-use std::path::{Path, PathBuf};
 use tokio::process::Command;
 use tokio::sync::Mutex;
 use std::sync::{Arc};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
-use chrono::{DateTime, Duration, Utc};
+use chrono::Duration;
 use tokio::sync::mpsc::channel;
-use log::{debug, error, info, log, warn};
+use log::{debug, error, warn};
 use nix::sys::signal::{kill, Signal};
 use nix::sys::wait::{waitpid, WaitPidFlag, WaitStatus};
 use nix::unistd::Pid;
 use crate::cgroup::CGroupHook;
 use crate::context::Context;
 use crate::docker::DockerHook;
-use crate::hooks::{EmptyHook, HookType, JobHook, JobIntoBox};
+use crate::hooks::{HookType, JobHook, JobIntoBox};
 use crate::provider::{_LOG_DIR_KEY, _LOG_FILE_KEY, _WORKING_DIR_KEY};
 use crate::runner::{err_process_not_started, CmdJob};
 use crate::zfs_hook::ZfsHook;
@@ -91,18 +87,6 @@ impl BaseProvider {
         self.ctx.clone()
     }
     
-    
-    pub(crate) fn interval(&self) -> Duration {
-        self.interval.clone()
-    }
-    
-    fn retry(&self) -> i64 {
-        self.retry
-    }
-    
-    pub(crate) fn timeout(&self) -> Duration {
-        self.timeout.clone()
-    }
     
     fn is_master(&self) -> bool {
         self.is_master

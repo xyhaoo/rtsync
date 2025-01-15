@@ -1,11 +1,9 @@
-use std::sync::RwLock;
 use chrono::Utc;
 use reqwest::Client;
 use crate::config::Config;
 use rocket::{Build, Rocket, State};
 use internal::util::{create_http_client, post_json};
 use crate::db::{make_db_adapter, DbAdapter};
-
 use rocket::http::Status;
 use rocket::serde::json::Json;
 use rocket::serde::{Serialize, Deserialize};
@@ -418,7 +416,7 @@ async fn handle_client_cmd(client_cmd: Json<ClientCmd>,
     }
     
     let w = adapter.get_worker(&worker_id);
-    if let Err(e) = w {
+    if let Err(_e) = w {
         let error = format!("worker{}还未注册", worker_id);
         error!("{}", error);
         return Err((Status::BadRequest, Json(Response::Error(error))))

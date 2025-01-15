@@ -4,7 +4,6 @@ use tokio::sync::{Mutex, MutexGuard};
 use chrono::{DateTime, Utc};
 use skiplist::skipmap::SkipMap;
 use log::{debug, warn};
-use serde::Serialize;
 use crate::job::MirrorJob;
 // jobs的调度队列
 

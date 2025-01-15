@@ -1,4 +1,4 @@
-use chrono::{DateTime, FixedOffset, Duration, TimeZone, Utc};
+use chrono::{DateTime, TimeZone, Utc};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use crate::msg::MirrorStatus;
 use crate::status::SyncStatus;
@@ -94,8 +94,8 @@ pub fn build_web_mirror_status(m: MirrorStatus) -> WebMirrorStatus {
 
 #[cfg(test)]
 mod tests{
-    use log::Level::Trace;
     use super::*;
+    use chrono::{FixedOffset, Duration};
     #[test]
     fn test_status_ser_de(){
         // 设置测试时区为 Asia/Tokyo

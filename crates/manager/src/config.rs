@@ -1,8 +1,6 @@
-use std::{fmt, fs};
+use std::fs;
 use std::str::FromStr;
 use clap::ArgMatches;
-use clap::builder::Str;
-use serde::de::Error;
 use serde::Deserialize;
 use anyhow::Result;
 

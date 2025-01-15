@@ -2,9 +2,8 @@ use anyhow::{anyhow, Result};
 use std::path::Path;
 use std::process::Command;
 use async_trait::async_trait;
-use log::{error, info, log};
-use crate::hooks::{EmptyHook, JobHook};
-use crate::provider::MirrorProvider;
+use log::{error, info};
+use crate::hooks::JobHook;
 use users;
 use users::get_current_uid;
 

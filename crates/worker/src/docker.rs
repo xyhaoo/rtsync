@@ -1,4 +1,4 @@
-use std::{fs, io, thread, time::Duration};
+use std::{fs, io, time::Duration};
 use anyhow::{anyhow, Result};
 use std::fs::Permissions;
 use std::os::unix::fs::PermissionsExt;
@@ -9,13 +9,11 @@ use log::{debug, error, warn};
 use crate::config::{DockerConfig, MemBytes, MirrorConfig};
 use anymap::AnyMap;
 use crate::context::Context;
-use crate::hooks::{EmptyHook, JobHook};
-use crate::provider::MirrorProvider;
+use crate::hooks::JobHook;
 use async_trait::async_trait;
 
 #[derive(Debug, Clone, Default)]
 pub(crate) struct DockerHook {
-    // pub(crate) empty_hook: EmptyHook<T>,
     pub(crate) image: String,
     pub(crate) volumes: Vec<String>,
     pub(crate) options: Vec<String>,

@@ -75,8 +75,8 @@ mod tests{
         assert_eq!(provider.working_dir().await, c.working_dir);
         assert_eq!(provider.log_dir().await, c.log_dir);
         assert_eq!(provider.log_file().await, c.log_file);
-        assert_eq!(provider.interval().await, c.interval);
-        assert_eq!(provider.timeout().await, c.timeout);
+        assert_eq!(provider.interval(), c.interval);
+        assert_eq!(provider.timeout(), c.timeout);
 
 
         // test_entering_and_exiting_a_context(provider, c).await;
@@ -203,7 +203,7 @@ exit 0
         assert_eq!(provider.working_dir().await, c.working_dir);
         assert_eq!(provider.log_dir().await, c.log_dir);
         assert_eq!(provider.log_file().await, c.log_file);
-        assert_eq!(provider.interval().await, c.interval);
+        assert_eq!(provider.interval(), c.interval);
         
         // test run
         let script_content = r#"#!/bin/bash
@@ -288,7 +288,7 @@ exit 0
         assert_eq!(provider.working_dir().await, c.working_dir);
         assert_eq!(provider.log_dir().await, c.log_dir);
         assert_eq!(provider.log_file().await, c.log_file);
-        assert_eq!(provider.interval().await, c.interval);
+        assert_eq!(provider.interval(), c.interval);
 
         // test run
         let script_content = r#"#!/bin/bash
@@ -439,7 +439,7 @@ done
         assert_eq!(provider.working_dir().await, c.working_dir);
         assert_eq!(provider.log_dir().await, c.log_dir);
         assert_eq!(provider.log_file().await, c.log_file);
-        assert_eq!(provider.interval().await, c.interval);
+        assert_eq!(provider.interval(), c.interval);
 
         // test_run_simple_command(provider, script_file, script_file_path).await;
         // test_command_fails(provider, script_file, script_file_path).await;
@@ -539,7 +539,7 @@ sleep 10
         assert_eq!(provider.working_dir().await, c.working_dir);
         assert_eq!(provider.log_dir().await, c.log_dir);
         assert_eq!(provider.log_file().await, c.log_file);
-        assert_eq!(provider.interval().await, c.interval);
+        assert_eq!(provider.interval(), c.interval);
 
         provider.run(channel(1).0).await.unwrap();
     }
@@ -649,7 +649,7 @@ sleep 10
         assert_eq!(provider.working_dir().await, c.working_dir);
         assert_eq!(provider.log_dir().await, c.log_dir);
         assert_eq!(provider.log_file().await, c.log_file);
-        assert_eq!(provider.interval().await, c.interval);
+        assert_eq!(provider.interval(), c.interval);
 
         // test_a_command(provider, script_file_path).await
         test_terminating(provider, script_file_path).await

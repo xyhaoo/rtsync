@@ -1,14 +1,14 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use std::{fs, io};
-use std::fs::{DirEntry, Permissions};
+use std::fs::Permissions;
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::path::Path;
 use std::sync::Arc;
 use chrono::Utc;
 use log::debug;
 use crate::context::Context;
-use crate::hooks::{EmptyHook, JobHook};
-use crate::provider::{MirrorProvider, _LOG_FILE_KEY};
+use crate::hooks::JobHook;
+use crate::provider::_LOG_FILE_KEY;
 use anymap::AnyMap;
 use tokio::sync::Mutex;
 use async_trait::async_trait;
@@ -29,7 +29,7 @@ impl JobHook for LogLimiter{
                       provider_name: String,
                       log_dir: String,
                       log_file: String,
-                      working_dir: String,
+                      _working_dir: String,
                       context: Arc<Mutex<Option<Context>>>)
                       -> Result<()> 
     {

@@ -1,8 +1,7 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::error::Error;
-use rusty_leveldb::{DB, DBIterator, LdbIterator, Options};
-use std::sync::Arc;
+use rusty_leveldb::{DB, LdbIterator};
 
 use crate::db::KvAdapter;
 
@@ -12,7 +11,7 @@ pub struct LeveldbAdapter{
 }
 
 impl KvAdapter for LeveldbAdapter {
-    fn init_bucket(&self, bucket: &str) -> Result<(), Box<dyn Error>> {
+    fn init_bucket(&self, _bucket: &str) -> Result<(), Box<dyn Error>> {
         Ok(())
     }
 

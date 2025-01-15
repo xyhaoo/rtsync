@@ -1,14 +1,6 @@
-use std::cell::{Ref, RefCell};
+use std::cell::RefCell;
 use std::str::FromStr;
 use anyhow::Result;
-// use cgroups_rs::Cgroup;
-
-#[derive(Debug)]
-pub(crate) enum ConfigError {
-    IoError(std::io::Error),
-    TomlError(toml::de::Error),
-    // Add other error types as needed
-}
 
 #[derive(Debug, PartialEq, Deserialize, Clone, Eq)]
 pub enum ProviderEnum {
@@ -154,6 +146,7 @@ struct IncludeMirrorConfig {
 #[derive(Debug, Default, Deserialize, Clone, Eq, PartialEq)]
 pub struct MemBytes(pub(crate) i64);
 impl MemBytes {
+    #[warn(dead_code)]
     fn r#type(&self) -> String{
         "bytes".to_string()
     }
@@ -222,7 +215,6 @@ use std::fs;
 use std::rc::Rc;
 use serde::Deserialize;
 
-use merge::Merge;
 #[derive(Debug, Deserialize, Default, Clone, Eq, PartialEq)]
 #[serde(default)]
 pub struct MirrorConfig {
@@ -276,42 +268,27 @@ pub struct MirrorConfig {
     pub(crate) child_mirrors: Option<Vec<MirrorConfig>>
 }
 
+macro_rules! merge {
+    ($self:ident, $other:ident, { $($field:ident),* }) => {
+        $(
+            $self.$field = $other.$field.or($self.$field.take());
+        )*
+    };
+}
+
+
 impl MirrorConfig {
+    
     fn merge(&mut self, other: Self) {
-        self.name = other.name.or(self.name.take());
-        self.provider = other.provider.or(self.provider.take());
-        self.upstream = other.upstream.or(self.upstream.take());
-        self.interval = other.interval.or(self.interval.take());
-        self.retry = other.retry.or(self.retry.take());
-        self.timeout = other.timeout.or(self.timeout.take());
-        self.mirror_dir = other.mirror_dir.or(self.mirror_dir.take());
-        self.mirror_sub_dir = other.mirror_sub_dir.or(self.mirror_sub_dir.take());
-        self.log_dir = other.log_dir.or(self.log_dir.take());
-        self.env = other.env.or(self.env.take());
-        self.role = other.role.or(self.role.take());
-        self.exec_on_success = other.exec_on_success.or(self.exec_on_success.take());
-        self.exec_on_failure = other.exec_on_failure.or(self.exec_on_failure.take());
-        self.exec_on_success_extra = other.exec_on_success_extra.or(self.exec_on_success_extra.take());
-        self.exec_on_failure_extra = other.exec_on_failure_extra.or(self.exec_on_failure_extra.take());
-        self.command = other.command.or(self.command.take());
-        self.fail_on_match = other.fail_on_match.or(self.fail_on_match.take());
-        self.size_pattern = other.size_pattern.or(self.size_pattern.take());
-        self.use_ipv4 = other.use_ipv4.or(self.use_ipv4.take());
-        self.use_ipv6 = other.use_ipv6.or(self.use_ipv6.take());
-        self.exclude_file = other.exclude_file.or(self.exclude_file.take());
-        self.username = other.username.or(self.username.take());
-        self.password = other.password.or(self.password.take());
-        self.rsync_no_timeo = other.rsync_no_timeo.or(self.rsync_no_timeo.take());
-        self.rsync_timeout = other.rsync_timeout.or(self.rsync_timeout.take());
-        self.rsync_options = other.rsync_options.or(self.rsync_options.take());
-        self.rsync_override = other.rsync_override.or(self.rsync_override.take());
-        self.stage1_profile = other.stage1_profile.or(self.stage1_profile.take());
-        self.memory_limit = other.memory_limit.or(self.memory_limit.take());
-        self.docker_image = other.docker_image.or(self.docker_image.take());
-        self.docker_volumes = other.docker_volumes.or(self.docker_volumes.take());
-        self.docker_options = other.docker_options.or(self.docker_options.take());
-        self.snapshot_path = other.snapshot_path.or(self.snapshot_path.take());
-        self.child_mirrors = other.child_mirrors.or(self.child_mirrors.take());
+        merge!(self, other, {
+            name, provider, upstream, interval, retry, timeout, mirror_dir, 
+            mirror_sub_dir, log_dir, env, role,
+            exec_on_success, exec_on_failure, exec_on_success_extra, exec_on_failure_extra,
+            command, fail_on_match, size_pattern, use_ipv4, use_ipv6, exclude_file,
+            username, password, rsync_no_timeo, rsync_timeout, rsync_options, rsync_override,
+            stage1_profile, memory_limit, 
+            docker_image, docker_volumes, docker_options, snapshot_path, child_mirrors
+        });
     }
 }
 
@@ -346,7 +323,7 @@ pub fn load_config(cfg_file: &str) -> Result<Config> {
 // 依据mirror_config配置cfg的mirror字段
 fn recursive_mirrors(cfg: &mut Config, parent: Rc<RefCell<Option<MirrorConfig>>>, mirror: MirrorConfig) -> Result<()> {
     let cur_mir = match &*parent.borrow() {
-        Some(mirror_config) => parent.clone(),
+        Some(_mirror_config) => parent.clone(),
         None => Rc::new(RefCell::new(Some(MirrorConfig::default()))),
     };
     if let Some(ref mut mirror_config) = *cur_mir.borrow_mut() {

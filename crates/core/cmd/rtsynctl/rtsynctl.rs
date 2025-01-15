@@ -29,9 +29,6 @@ lazy_static! {
     static ref CLIENT: RwLock<Client> = RwLock::new(Client::new());
 }
 
-fn initialize_wrapper(){
-
-}
 
 #[derive(Serialize, Deserialize, Debug, Default)]
 #[serde(default)]

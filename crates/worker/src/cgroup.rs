@@ -3,14 +3,13 @@ use std::fs::File;
 use std::io::{self, BufRead, Read};
 use std::process::{Command, exit};
 use std::os::unix::io::FromRawFd;
-use crate::hooks::{EmptyHook, JobHook};
+use crate::hooks::JobHook;
 use crate::config::{CGroupConfig, MemBytes};
-use std::{fs, io::{ Write}, path::Path};
-use anyhow::{anyhow, Result};
+use std::fs;
+use anyhow::Result;
 use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::Mutex;
-use log::{debug, info, log, trace};
 use crate::context::Context;
 // use cgroups_rs::hierarchies;
 
@@ -68,7 +67,7 @@ fn wait_exec() -> io::Result<()> {
     let env_vars = env::vars().collect::<Vec<_>>();
 
     // Run the external command using Command
-    let mut child = Command::new(&binary)
+    let child = Command::new(&binary)
         .args(&args)
         .envs(env_vars.iter().map(|(k, v)| (k.as_str(), v.as_str())))
         .spawn();

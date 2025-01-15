@@ -4,7 +4,7 @@ use std::error::Error;
 use chrono::Utc;
 use internal::msg::{WorkerStatus, MirrorStatus};
 use serde_json;
-use std::sync::{Arc, RwLock, RwLockWriteGuard};
+use std::sync::{Arc, RwLock};
 use internal::status::SyncStatus;
 use std::path::Path;
 use crate::db_rocksdb::RocksDbAdapter;

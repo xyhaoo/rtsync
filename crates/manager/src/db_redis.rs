@@ -1,10 +1,7 @@
 use redis::{Commands, Client};
 use std::collections::HashMap;
 use std::error::Error;
-use std::sync::{Arc, RwLock};
 use crate::db::KvAdapter;
-use tokio::runtime::Runtime;
-use async_trait::async_trait;
 pub struct RedisAdapter {
     pub(crate) db: Client,
 }

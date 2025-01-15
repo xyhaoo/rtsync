@@ -5,7 +5,7 @@ use std::fs::Permissions;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use tokio::process::Command;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{Mutex, RwLock};
 use async_trait::async_trait;
@@ -106,7 +106,7 @@ impl TwoStageRsyncProvider {
         if c.rsync_cmd.is_empty(){
             c.rsync_cmd = "rsync".to_string();
         }
-        let mut provider = TwoStageRsyncProvider{
+        let provider = TwoStageRsyncProvider{
             base_provider: Arc::new(RwLock::new(BaseProvider::new(c.name.clone(), c.interval, c.retry, c.timeout))),
             two_stage_rsync_config: Arc::from(c.clone()),
             stage1_options: Arc::from(["-aHvh", "--no-o", "--no-g", "--stats",
@@ -189,7 +189,7 @@ impl TwoStageRsyncProvider {
     /// cmd配置base_provider字段中的cmd字段
     async fn cmd(&self, cmd_and_args: Vec<String>, working_dir: String, env: HashMap<String, String>){
         let mut base_provider_lock = self.base_provider.write().await;
-        let mut cmd_job: CmdJob;
+        let cmd_job: CmdJob;
         let mut args: Vec<String> = Vec::new();
         let use_docker = base_provider_lock.docker_ref().is_some();
 
@@ -197,7 +197,7 @@ impl TwoStageRsyncProvider {
             let c = "docker";
             args.extend(vec!["run".to_string(), "--rm".to_string(),
                              // "-a".to_string(), "STDOUT".to_string(), "-a".to_string(), "STDERR".to_string(),
-                             "--name".to_string(), d.name(base_provider_lock.name().parse().unwrap()),
+                             "--name".to_string(), d.name(self.name().parse().unwrap()),
                              "-w".to_string(), working_dir.clone()]);
             // 指定用户
             unsafe {
@@ -205,7 +205,7 @@ impl TwoStageRsyncProvider {
                                  format!("{}:{}",getuid().to_string(), getgid().to_string())]);
             }
             // 添加卷
-            for vol in d.volumes.iter(){
+            for vol in base_provider_lock.docker_volumes().await{
                 debug!("数据卷: {}", &vol);
                 args.extend(vec!["-v".to_string(), vol.clone()])
             }
@@ -258,7 +258,7 @@ impl TwoStageRsyncProvider {
                 if err.kind() == io::ErrorKind::NotFound {
                     debug!("创建文件夹：{}", &working_dir);
                     if fs::create_dir_all(&working_dir).is_ok(){
-                        if let Err(e) = fs::set_permissions(&working_dir, Permissions::from_mode(0o755)) {
+                        if fs::set_permissions(&working_dir, Permissions::from_mode(0o755)).is_err()  {
                             error!("更改文件夹 {} 权限失败: {}",&working_dir, err)
                         }
                     }else {
@@ -325,7 +325,7 @@ impl MirrorProvider for TwoStageRsyncProvider {
             
             base_provider_lock.is_running.store(true, Ordering::Release);
             
-            debug!("将is_running字段设置为true :{}", base_provider_lock.name());
+            debug!("将is_running字段设置为true :{}", self.name());
 
             // { started.send(()).await.expect("无法发送"); }
         
@@ -380,16 +380,16 @@ impl MirrorProvider for TwoStageRsyncProvider {
             .hooks()
     }
 
-    async fn interval(&self) -> Duration {
-        self.base_provider.read().await.interval()
+    fn interval(&self) -> Duration {
+        self.two_stage_rsync_config.interval
     }
 
-    async fn retry(&self) -> i64 {
-        self.base_provider.read().await.retry
+    fn retry(&self) -> i64 {
+        self.two_stage_rsync_config.retry
     }
 
-    async fn timeout(&self) -> Duration {
-        self.base_provider.read().await.timeout()
+    fn timeout(&self) -> Duration {
+        self.two_stage_rsync_config.timeout
     }
 
     async fn working_dir(&self) -> String {

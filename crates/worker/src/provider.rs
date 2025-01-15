@@ -8,7 +8,7 @@ use crate::hooks::{HookType, JobHook};
 use crate::context::Context;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
-use chrono::{DateTime, Duration, Utc};
+use chrono::Duration;
 use log::{error, warn};
 use tera::Tera;
 use crate::cmd_provider::{CmdConfig, CmdProvider};
@@ -61,9 +61,9 @@ pub trait MirrorProvider: Send + Sync + std::fmt::Debug {
     async fn add_hook(&mut self, hook: HookType);
     async fn hooks(&self) -> Arc<Mutex<Vec<Box<dyn JobHook>>>>;
 
-    async fn interval(&self)-> Duration;
-    async fn retry(&self) -> i64;
-    async fn timeout(&self) -> Duration;
+    fn interval(&self)-> Duration;
+    fn retry(&self) -> i64;
+    fn timeout(&self) -> Duration;
 
     async fn working_dir(&self) -> String;
     async fn log_dir(&self) -> String;
@@ -181,7 +181,7 @@ pub(crate) async fn new_mirror_provider(mut mirror: MirrorConfig, cfg: Config) -
                 timeout: Duration::seconds(mirror.timeout.unwrap_or_default()),
             };
             match RsyncProvider::new(rc).await {
-                Ok(mut p) => {
+                Ok(p) => {
                     p.base_provider.write().await.is_master = is_master;
                     provider = Box::new(p);
                 },
@@ -213,7 +213,7 @@ pub(crate) async fn new_mirror_provider(mut mirror: MirrorConfig, cfg: Config) -
                 timeout: Duration::seconds(mirror.timeout.unwrap_or_default()),
             };
             match TwoStageRsyncProvider::new(rc).await {
-                Ok(mut p) => {
+                Ok(p) => {
                     p.base_provider.write().await.is_master = is_master;
                     provider = Box::new(p);
                 },

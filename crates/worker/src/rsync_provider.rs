@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use anyhow::{anyhow, Result};
-use std::{fs, io, thread};
+use std::{fs, io};
 use std::fs::Permissions;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
@@ -8,13 +8,11 @@ use tokio::process::Command;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{Mutex, RwLock};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use anymap::AnyMap;
 use chrono::Duration;
 use libc::{getgid, getuid};
-use log::{debug, error, warn};
-use nix::sys::signal::{kill, Signal};
-use nix::unistd::Pid;
+use log::{debug, error};
 use internal;
 use internal::util::extract_size_from_rsync_log;
 use crate::base_provider::{BaseProvider};
@@ -24,7 +22,7 @@ use crate::context::Context;
 use crate::docker::DockerHook;
 use crate::hooks::{HookType, JobHook};
 use crate::provider::{MirrorProvider, _LOG_DIR_KEY, _LOG_FILE_KEY, _WORKING_DIR_KEY};
-use crate::runner::{err_process_not_started, CmdJob};
+use crate::runner::CmdJob;
 use async_trait::async_trait;
 
 #[derive(Clone, Default, Debug)]
@@ -167,7 +165,7 @@ impl RsyncProvider {
             // -w 容器内部工作目录
             args.extend(vec!["run".to_string(), "--rm".to_string(),
                              // "-a".to_string(), "STDOUT".to_string(), "-a".to_string(), "STDERR".to_string(),
-                             "--name".to_string(), d.name(base_provider_lock.name().parse().unwrap()),
+                             "--name".to_string(), d.name(self.name().parse().unwrap()),
                              "-w".to_string(), working_dir.clone()]);
             // -u 设置容器运行时的用户:用户组
             unsafe {
@@ -175,7 +173,7 @@ impl RsyncProvider {
                                  format!("{}:{}",getuid().to_string(), getgid().to_string())]);
             }
             // -v 添加卷: 把主机的文件或目录挂载到容器内
-            for vol in d.volumes.iter(){
+            for vol in base_provider_lock.docker_volumes().await{
                 debug!("数据卷: {}", &vol);
                 args.extend(vec!["-v".to_string(), vol.clone()])
             }
@@ -336,7 +334,7 @@ impl MirrorProvider for RsyncProvider  {
         
         base_provider_lock.is_running.store(true, Ordering::Release);
         
-        debug!("将is_running字段设置为true :{}", base_provider_lock.name());
+        debug!("将is_running字段设置为true :{}", self.name());
 
         drop(base_provider_lock);
         Ok(())
@@ -364,16 +362,16 @@ impl MirrorProvider for RsyncProvider  {
             .hooks()
     }
 
-    async fn interval(&self) -> Duration {
-        self.base_provider.read().await.interval()
+    fn interval(&self) -> Duration {
+        self.rsync_config.interval
     }
 
-    async fn retry(&self) -> i64 {
-        self.base_provider.read().await.retry
+    fn retry(&self) -> i64 {
+        self.rsync_config.retry
     }
 
-    async fn timeout(&self) -> Duration {
-        self.base_provider.read().await.timeout()
+    fn timeout(&self) -> Duration {
+        self.rsync_config.timeout
     }
 
     async fn working_dir(&self) -> String {

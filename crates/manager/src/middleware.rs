@@ -1,9 +1,7 @@
-use rocket::{Request, Data, Response, Rocket};
+use rocket::{Request, Response};
 use rocket::fairing::{Fairing, Info, Kind};
 use rocket::http::Status;
-use rocket::tokio::sync::Mutex;
-use std::sync::Arc;
-use log::{error, info};
+use log::error;
 use rocket::request::{FromRequest, Outcome};
 use rocket::serde::json::Json;
 use crate::db::DbAdapter;

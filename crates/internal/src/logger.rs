@@ -1,9 +1,7 @@
-
-
-// init_logger 初始化log格式和级别
 use fern::colors::{Color, ColoredLevelConfig};
 use chrono::Local;
 use log::LevelFilter;
+// init_logger 初始化log格式和级别
 
 pub fn init_logger(verbose: bool, debug: bool, with_systemd: bool) {
     // 配置颜色

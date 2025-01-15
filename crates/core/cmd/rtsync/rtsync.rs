@@ -2,7 +2,7 @@ use std::fs::File;
 use std::io::Write;
 use std::process::exit;
 use clap;
-use clap::{arg, Arg, ArgAction, ArgMatches, Command, Subcommand};
+use clap::{ArgMatches, Command, Subcommand};
 use log::{error, info};
 use anyhow::Result;
 use tokio::signal::unix::{signal, SignalKind};
@@ -27,7 +27,7 @@ async fn start_manager(c: &ArgMatches) -> Result<()> {
         },
         Ok(config) => {
             match manager::server::get_rtsync_manager(&config){
-                Err(e) => {
+                Err(_e) => {
                     error!("初始化 RT sync manager 失败.");
                     exit(1);
                 },

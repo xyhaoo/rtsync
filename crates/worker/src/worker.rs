@@ -11,7 +11,6 @@ use tokio::sync::{Mutex, MutexGuard, RwLock, Semaphore};
 use internal::msg::{CmdVerb, MirrorSchedule, MirrorSchedules, MirrorStatus, WorkerCmd, WorkerStatus};
 use internal::util::{create_http_client, get_json, post_json};
 use libc::getpid;
-use nix::NixPath;
 use nix::sys::signal::{kill, Signal};
 use rocket::http::Status;
 use rocket::serde::Serialize;
@@ -327,7 +326,7 @@ impl Worker {
                         tokio::spawn(async move {
                             job_clone.run(manager_chan, semaphore).await.unwrap();
                         });
-                        let stime = m.last_update + job.provider.interval().await;
+                        let stime = m.last_update + job.provider.interval();
                         debug!("安排了 job {} @{}", job.name(), stime.format("%d-%m-%Y %H:%M:%S"));
                         self.worker_manager.schedule.add_job(stime, job.clone()).await;
                     }
@@ -382,7 +381,7 @@ impl Worker {
 
                     // 只有同步任务成功或失败时发送的schedule信号（都为true）才会触发该任务的下一次同步调度
                     if job_msg.schedule {
-                        let schedule_time = Utc::now() + job.provider.interval().await;
+                        let schedule_time = Utc::now() + job.provider.interval();
                         info!("{} 的下一次同步时间: {}",
                             job.name(),
                             schedule_time.format("%Y-%m-%d %H:%M:%S"));
@@ -451,7 +450,7 @@ impl Worker {
             debug!("向 manager url: {} 注册 worker", url);
             let mut retry = 10;
             while retry > 0 {
-                if let Err(e) = post_json(&url, &msg, Some(self.http_client.clone())).await{
+                if post_json(&url, &msg, Some(self.http_client.clone())).await.is_err() {
                     error!("注册worker失败");
                     retry -= 1;
                     if retry > 0 {

@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod tests {
     use core::time;
-    use std::fmt::format;
     use std::fs;
     use std::fs::File;
     use std::io::Write;
@@ -48,8 +47,8 @@ mod tests {
         assert_eq!(provider.working_dir().await, c.working_dir);
         assert_eq!(provider.log_dir().await, c.log_dir);
         assert_eq!(provider.log_file().await, c.log_file);
-        assert_eq!(provider.interval().await, c.interval);
-        assert_eq!(provider.timeout().await, c.timeout);
+        assert_eq!(provider.interval(), c.interval);
+        assert_eq!(provider.timeout(), c.timeout);
 
         test_a_normal_job(provider, script_file_path).await;
         // test_running_long_jobs_with_post_fail_hook(provider, tmp_dir_path, script_file_path).await;

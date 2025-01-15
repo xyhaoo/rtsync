@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use std::fmt::Debug;
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -61,9 +61,7 @@ pub(crate) trait JobHook: Debug + Send + Sync{
                  _context: Arc<Mutex<Option<Context>>>) 
         -> Result<()> {Ok(())}
 }
-pub(crate) struct EmptyHook{
-    // pub(crate) provider: Box<dyn MirrorProvider<ContextStoreVal=T>>,
-}
+
 
 #[enum_dispatch]
 pub(crate) trait JobIntoBox: JobHook{
@@ -98,7 +96,6 @@ pub(crate) enum HookType{
     BtrfsNoLinux(btrfs_snapshot_hook_nolinux::BtrfsSnapshotHook),
     Cgroup(CGroupHook),
     Docker(DockerHook),
-    // Empty(EmptyHook),
     ExecPost(ExecPostHook),
     LogLimiter(LogLimiter),
     Zfs(ZfsHook),

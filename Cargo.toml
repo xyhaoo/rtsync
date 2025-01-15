@@ -30,15 +30,15 @@ name = "rtsynctl_autocomplete"
 path = "crates/core/cmd/rtsynctl/build.rs"
 
 #################################################
-[[bin]]
-bench = false
-name = "manager_main"
-path = "tests/manager_main.rs"
-
-[[bin]]
-bench = false
-name = "worker_main"
-path = "tests/worker_main.rs"
+#[[bin]]
+#bench = false
+#name = "manager_main"
+#path = "tests/manager_main.rs"
+#
+#[[bin]]
+#bench = false
+#name = "worker_main"
+#path = "tests/worker_main.rs"
 #################################################
 
 

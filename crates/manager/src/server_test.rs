@@ -4,22 +4,18 @@
 mod tests {
     use std::collections::HashMap;
     use std::error::Error;
-    use std::sync::{Arc, RwLock, RwLockReadGuard};
-    use std::{thread, time};
+    use std::sync::{Arc, RwLock};
+    use std::time;
     use std::sync::atomic::{AtomicU32, Ordering};
     use chrono::{Duration, TimeZone, Utc};
     use internal::msg::{ClientCmd, CmdVerb, MirrorSchedule, MirrorSchedules, MirrorStatus, WorkerCmd, WorkerStatus};
     use crate::db::DbAdapter;
-    use log::{debug, error, info};
+    use log::{error, info};
     use rocket::http::Status;
-    use rocket::local::asynchronous::{Client, LocalResponse};
+    use rocket::local::asynchronous::Client;
     use rocket::{tokio, Build, Rocket, State};
     use rocket::serde::json::Json;
-    use rocket::yansi::Paint;
     use tokio::sync::mpsc;
-    use tracing_subscriber::fmt::format;
-    // use rocket::local::blocking::Client;
-    // use tokio::task;
     use internal::logger::init_logger;
     use internal::status::SyncStatus;
     use internal::status_web::WebMirrorStatus;

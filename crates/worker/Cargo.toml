@@ -9,28 +9,25 @@ name = "worker"
 bench = false
 
 [dependencies]
-thiserror = "1.0.65"
 toml = "0.8.19"
 serde = { version = "1.0.211", features = ["derive"] }
 glob = "0.3.1"
-merge = "0.1.0"
 tempfile = "3.13.0"
 users = "0.11.0"
 chrono = "0.4.38"
 regex = "1.11.1"
 log = "0.4.22"
 libc = "0.2.161"
-sysinfo = "0.32.0"
 #cgroups-rs = "0.3.4"
 skiplist = "0.5.1"
 tera = "1.20.0"
 shlex = "1.3.0"
 internal = {path = "../internal"}
-anymap = "0.12.1"
+anymap = "0.12.0"
 enum_dispatch = "0.3.13"
 nix = { version = "0.29.0", features = ["process", "signal"] }
 lazy_static = "1.5.0"
-tokio = "1.41.1"
+tokio = {version = "1.41.1", features = ["full"]}
 scopeguard = "1.2"
 async-trait = "0.1.83"
 anyhow = "1.0.95"

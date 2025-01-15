@@ -1,5 +1,5 @@
 use std::cmp::Ordering;
-use chrono::{DateTime, FixedOffset, Utc};
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use serde::de::{self, Deserializer};
 use serde::ser::Serializer;

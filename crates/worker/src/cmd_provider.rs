@@ -1,19 +1,17 @@
 use std::collections::HashMap;
 use anyhow::{anyhow, Result};
 use std::{fs, io};
-use std::ffi::{OsStr, OsString};
 use std::fs::Permissions;
 use std::os::unix::fs::PermissionsExt;
 use tokio::process::Command;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::{Mutex, RwLock};
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use anymap::AnyMap;
-use chrono::{DateTime, Duration, Utc};
+use chrono::Duration;
 use libc::{getgid, getuid};
-use log::{debug, error, info, warn};
-use nix::sys::signal::{kill, Signal};
+use log::{debug, error, info};
 use regex::Regex;
 use shlex::Shlex;
 use crate::base_provider::{BaseProvider};
@@ -24,7 +22,7 @@ use crate::provider::{MirrorProvider, _LOG_DIR_KEY, _LOG_FILE_KEY, _WORKING_DIR_
 use internal::util::{find_all_submatches_in_file, extract_size_from_log};
 use crate::docker::DockerHook;
 use crate::hooks::{HookType, JobHook};
-use crate::runner::{err_process_not_started, CmdJob};
+use crate::runner::CmdJob;
 use async_trait::async_trait;
 
 #[derive(Clone, Default, Debug)]
@@ -124,7 +122,7 @@ impl CmdProvider{
         let working_dir = self.working_dir().await;
         let mut base_provider_lock = self.base_provider.write().await;
         let mut env: HashMap<String, String> = [
-            ("RTSYNC_MIRROR_NAME".to_string(), base_provider_lock.name().to_string()),
+            ("RTSYNC_MIRROR_NAME".to_string(), self.name().to_string()),
             ("RTSYNC_WORKING_DIR".to_string(), base_provider_lock.working_dir().await),
             ("RTSYNC_UPSTREAM_URL".to_string(), self.cmd_config.upstream_url.clone()),
             ("RTSYNC_LOG_DIR".to_string(), base_provider_lock.log_dir().await),
@@ -135,7 +133,7 @@ impl CmdProvider{
             env.insert(k.to_string(), v.to_string());
         }
 
-        let mut cmd_job: CmdJob;
+        let cmd_job: CmdJob;
         let mut args: Vec<String> = Vec::new();
         let use_docker = base_provider_lock.docker_ref().is_some();
 
@@ -143,7 +141,7 @@ impl CmdProvider{
             let c = "docker";
             args.extend(vec!["run".to_string(), "--rm".to_string(),
                              // "-a".to_string(), "STDOUT".to_string(), "-a".to_string(), "STDERR".to_string(),
-                             "--name".to_string(), d.name(base_provider_lock.name().parse().unwrap()),
+                             "--name".to_string(), d.name(self.name().parse().unwrap()),
                              "-w".to_string(), working_dir.clone()]);
             // 指定用户
             unsafe {
@@ -151,7 +149,7 @@ impl CmdProvider{
                                  format!("{}:{}",getuid().to_string(), getgid().to_string())]);
             }
             // 添加卷
-            for vol in d.volumes.iter(){
+            for vol in base_provider_lock.docker_volumes().await{
                 // println!("debug: 数据卷 {}", &vol);
                 debug!("数据卷: {}", &vol);
                 args.extend(vec!["-v".to_string(), vol.clone()])
@@ -198,7 +196,7 @@ impl CmdProvider{
                 if err.kind() == io::ErrorKind::NotFound {
                     debug!("创建文件夹：{}", &working_dir);
                     if fs::create_dir_all(&working_dir).is_ok(){
-                        if let Err(e) = fs::set_permissions(&working_dir, Permissions::from_mode(0o755)) {
+                        if fs::set_permissions(&working_dir, Permissions::from_mode(0o755)).is_err()  {
                             error!("更改文件夹 {} 权限失败: {}",&working_dir, err)
                         }
                     }else {
@@ -294,7 +292,7 @@ impl MirrorProvider for CmdProvider{
         base_provider_lock.is_running.store(true, Ordering::Release);
         
         // println!("debug: 将is_running字段设置为true :{}", base_provider_lock.name());
-        debug!("将is_running字段设置为true :{}", base_provider_lock.name());
+        debug!("将is_running字段设置为true :{}", self.name());
 
         drop(base_provider_lock);
         Ok(())
@@ -326,16 +324,16 @@ impl MirrorProvider for CmdProvider{
             .hooks()
     }
 
-    async fn interval(&self) -> Duration {
-        self.base_provider.read().await.interval()
+    fn interval(&self) -> Duration {
+        self.cmd_config.interval
     }
 
-    async fn retry(&self) -> i64 {
-        self.base_provider.read().await.retry
+    fn retry(&self) -> i64 {
+        self.cmd_config.retry
     }
 
-    async fn timeout(&self) -> Duration {
-        self.base_provider.read().await.timeout()
+    fn timeout(&self) -> Duration {
+        self.cmd_config.timeout
     }
 
     async fn working_dir(&self) -> String {

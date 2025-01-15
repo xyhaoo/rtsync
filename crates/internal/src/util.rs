@@ -1,16 +1,14 @@
 use std::collections::HashMap;
 use std::{fs};
 use std::fs::File;
-use std::io::{self, Read, ErrorKind, BufReader};
-use std::sync::Arc;
-use reqwest::{Certificate, Client, Error};
+use std::io::{self, Read};
+use reqwest::{Certificate, Client};
 use reqwest::header::CONTENT_TYPE;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 use lazy_static::lazy_static;
-use rocket::data::N;
 
 lazy_static! {
     static ref  rsync_exit_values: HashMap<i32, &'static str> = [
@@ -195,6 +193,7 @@ pub fn translate_rsync_error_code(exit_code: i32) -> Option<String>{
 }
 
 
+#[cfg(test)]
 mod tests{
     use std::fs::File;
     use std::io::Write;

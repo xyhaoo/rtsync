@@ -1,7 +1,5 @@
 use std::fmt::{Display, Formatter};
 use anyhow::{anyhow, Result};
-use std::future::Future;
-use std::pin::Pin;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::Duration;
 use std::sync::Arc;
@@ -12,9 +10,7 @@ use crate::common::Empty;
 use crate::hooks::JobHook;
 use crate::provider::MirrorProvider;
 use internal::status::SyncStatus;
-use scopeguard::guard;
 use tokio::sync::mpsc::{Receiver, Sender};
-use crate::context::Context;
 // 这个文件描述一个mirror job的工作流
 
 // 控制动作枚举
@@ -56,18 +52,6 @@ impl Display for JobState {
     }
 }
 
-impl JobState {
-    fn from_u32(val: u32) -> Option<Self> {
-        match val {
-            0 => Some(JobState::None),
-            1 => Some(JobState::Ready),
-            2 => Some(JobState::Paused),
-            3 => Some(JobState::Disabled),
-            4 => Some(JobState::Halting),
-            _ => None
-        }
-    }
-}
 
 enum HookAction {
     PreJob,
@@ -276,7 +260,7 @@ impl MirrorJob {
 
         // 设置retry和timeout后进行同步，同步成功或失败都会发送信号
         // 非强制终止类型的同步失败发生时，会根据retry再次尝试同步
-        for retry in 0..self.provider.retry().await {
+        for retry in 0..self.provider.retry() {
             let mut stop_asap = false;  // stop job as soon as possible
 
             if retry > 0 {
@@ -323,7 +307,7 @@ impl MirrorJob {
             // Now terminating the provider is feasible
 
             // 处理超时和终止
-            let mut timeout = self.provider.timeout().await;
+            let timeout = self.provider.timeout();
             let timeout = if timeout.is_zero() {
                 Duration::from_secs(3600 * 100000) // 永远不会超时
             } else {
@@ -385,7 +369,7 @@ impl MirrorJob {
                     status: SyncStatus::Failed,
                     name: self.name(),
                     msg: sync_err.err().unwrap().to_string(),
-                    schedule: (retry == self.provider.retry().await - 1) && (self.state() == JobState::Ready),
+                    schedule: (retry == self.provider.retry() - 1) && (self.state() == JobState::Ready),
                 }).await?;
 
                 //
