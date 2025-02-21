@@ -21,15 +21,15 @@ const LIST_JOBS_PATH: &str = "/jobs";
 const LIST_WORKERS_PATH: &str = "/workers";
 const FLUSH_DISABLED_PATH: &str = "/jobs/disabled";
 const CMD_PATH: &str = "/cmd";
-const SYSTEM_CFG_FILE: &str = "/etc/rtsync/ctl.conf";   // system-wide conf
-const  USER_CFG_FILE: &str = "$HOME/.config/rtsync/ctl.conf";   // user-specific conf
+const SYSTEM_CFG_FILE: &str = "/etc/rtsync/ctl.conf";   // 系统级的配置文件地址
+const  USER_CFG_FILE: &str = "$HOME/.config/rtsync/ctl.conf";   // 用户级别的配置文件地址
 
 lazy_static! {
     static ref BASE_URL: RwLock<String> = RwLock::new(String::new());
     static ref CLIENT: RwLock<Client> = RwLock::new(Client::new());
 }
 
-
+// 配置文件的序列化结构
 #[derive(Serialize, Deserialize, Debug, Default)]
 #[serde(default)]
 struct Config {
@@ -49,9 +49,10 @@ fn load_config(cfg_file: &str, cfg: &mut Config) -> Result<()>{
 
 async fn initialize(c: &ArgMatches) -> Result<()>{
     // init logger
-    rtsync::logger::init_logger(c.get_flag("verbose"),
-                                c.get_flag("debug"),
-                                false);
+    rtsync::logger::init_logger(true, true, false);
+    // rtsync::logger::init_logger(c.get_flag("verbose"),
+    //                             c.get_flag("debug"),
+    //                             false);
 
     let mut cfg = Config::default();
 
@@ -59,28 +60,35 @@ async fn initialize(c: &ArgMatches) -> Result<()>{
     cfg.manager_addr = "localhost".to_string();
     cfg.manager_port = 14242;
 
-    // find config file and load config
-    load_config(SYSTEM_CFG_FILE, &mut cfg)?;
+    // 找到配置文件地址并导入。如果用户在命令行中使用参数指定，则使用这个配置文件
+    if fs::exists(SYSTEM_CFG_FILE).is_ok_and(|b| b){
+        load_config(SYSTEM_CFG_FILE, &mut cfg)?
+    }
+    
     let path = USER_CFG_FILE
         .replace("$HOME", &env::var("HOME").unwrap_or_default());
     debug!("用户的配置文件: {}", path);
+    if fs::exists(path.as_str()).is_ok_and(|b| b){
+        load_config(path.as_str(), &mut cfg)?;
+    }
+    
     if let Some(config) = c.get_one::<String>("config"){
         load_config(config.as_str(), &mut cfg)?;
     }
 
-    // override config using the command-line arguments
+    // 使用命令行参数重写其他配置项
     if let Some(manager) = c.get_one::<String>("manager"){
         cfg.manager_addr = manager.clone();
     }
-    if let Some(port) = c.get_one::<String>("manager_port"){
+    if let Some(port) = c.get_one::<String>("port"){
         cfg.manager_port = port.parse::<u32>()?;
     }
 
-    if let Some(ca_cert) = c.get_one::<String>("ca_cert"){
+    if let Some(ca_cert) = c.get_one::<String>("ca-cert"){
         cfg.ca_cert = ca_cert.clone();
     }
 
-    // parse base url of the manager server
+    // 解析 manager server 的 base url 
     let mut url_lock = BASE_URL.write().await;
     if !cfg.ca_cert.is_empty(){
         *url_lock = format!("https://{}:{}", &cfg.manager_addr, &cfg.manager_port);
@@ -90,9 +98,13 @@ async fn initialize(c: &ArgMatches) -> Result<()>{
     info!("使用manager地址: {}", *url_lock);
     drop(url_lock);
 
-    // create HTTP client
+    // 创建 HTTP 客户端
     let mut client_lock = CLIENT.write().await;
-    match rtsync::util::create_http_client(Some(&cfg.ca_cert)){
+    let ca_cert = match &cfg.ca_cert {
+        ca_cert if !ca_cert.is_empty() => Some(ca_cert.clone()),
+        _ => None,
+    };
+    match rtsync::util::create_http_client(ca_cert.as_deref()){
         Ok(client) => {
             *client_lock = client;
         }
@@ -358,15 +370,20 @@ async fn flush_disabled_jobs(_c: &ArgMatches) -> Result<()>{
     Ok(())
 }
 
-async fn cmd_job(cmd: rtsync::msg::CmdVerb, c: &ArgMatches){
+async fn cmd_job(cmd: rtsync::msg::CmdVerb, c: &ArgMatches, is_start: bool){
     let worker_id = c.get_one::<String>("WORKER").unwrap().clone();
     let mirror_id = c.get_one::<String>("MIRROR").unwrap().clone();
 
     let mut options: HashMap<String, bool> = HashMap::new();
     // force针对start
-    if c.get_flag("force"){
-        options.insert("force".to_string(), true);
+    // XXX: 由于clap不能在命令没有设置一个flag参数时尝试获得该flag值
+    // 且force flag参数只在start时使用,所以为该方法签名添加is_start参数来确定子命令
+    if is_start{
+        if c.get_flag("force"){
+            options.insert("force".to_string(), true);
+        }
     }
+    
     let client_cmd = rtsync::msg::ClientCmd{
         cmd,
         mirror_id,
@@ -472,7 +489,7 @@ async fn main() -> Result<()> {
                     eprintln!("{}", e);
                     exit(1);
                 }
-                cmd_job(rtsync::msg::CmdVerb::Start, &sub_matches).await;
+                cmd_job(rtsync::msg::CmdVerb::Start, &sub_matches, true).await;
             }
         },
         Some(("stop", sub_matches)) => {
@@ -481,7 +498,7 @@ async fn main() -> Result<()> {
                     eprintln!("{}", e);
                     exit(1);
                 }
-                cmd_job(rtsync::msg::CmdVerb::Stop, &sub_matches).await;
+                cmd_job(rtsync::msg::CmdVerb::Stop, &sub_matches, false).await;
             }
         },
         Some(("disable", sub_matches)) => {
@@ -490,7 +507,7 @@ async fn main() -> Result<()> {
                     eprintln!("{}", e);
                     exit(1);
                 }
-                cmd_job(rtsync::msg::CmdVerb::Disable, &sub_matches).await;
+                cmd_job(rtsync::msg::CmdVerb::Disable, &sub_matches, false).await;
             }
         },
         Some(("restart", sub_matches)) => {
@@ -499,7 +516,7 @@ async fn main() -> Result<()> {
                     eprintln!("{}", e);
                     exit(1);
                 }
-                cmd_job(rtsync::msg::CmdVerb::Restart, &sub_matches).await;
+                cmd_job(rtsync::msg::CmdVerb::Restart, &sub_matches, false).await;
             }
         },
         Some(("reload", sub_matches)) => {
@@ -517,7 +534,7 @@ async fn main() -> Result<()> {
                     eprintln!("{}", e);
                     exit(1);
                 }
-                cmd_job(rtsync::msg::CmdVerb::Ping, &sub_matches).await;
+                cmd_job(rtsync::msg::CmdVerb::Ping, &sub_matches, false).await;
             }
         },
         _ => unreachable!()

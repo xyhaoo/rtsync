@@ -16,9 +16,10 @@ mod cli;
 mod build;
 
 async fn start_manager(c: &ArgMatches) -> Result<()> {
-    rtsync::logger::init_logger(c.get_flag("verbose"), 
-                                c.get_flag("debug"), 
-                                c.get_flag("with-systemd"));
+    rtsync::logger::init_logger(true, true, false);
+    // rtsync::logger::init_logger(c.get_flag("verbose"), 
+    //                             c.get_flag("debug"), 
+    //                             c.get_flag("with-systemd"));
     
     match manager::config::load_config(c.get_one::<String>("config").cloned(), c){
         Err(e) => { 
@@ -44,9 +45,11 @@ async fn start_manager(c: &ArgMatches) -> Result<()> {
 }
 
 async fn start_worker(c: &ArgMatches) -> Result<()> {
-    rtsync::logger::init_logger(c.get_flag("verbose"), 
-                                c.get_flag("debug"), 
-                                c.get_flag("with-systemd"));
+    rtsync::logger::init_logger(true, true, false);
+    
+    // rtsync::logger::init_logger(c.get_flag("verbose"), 
+    //                             c.get_flag("debug"), 
+    //                             c.get_flag("with-systemd"));
     let config_path = c.get_one::<String>("config").cloned().unwrap();
     match worker::config::load_config(&config_path){
         Err(e) => {

@@ -13,14 +13,11 @@ pub(crate) fn build_cli() -> Command{
         arg!(-v --verbose "启用详细日志记录"),
         arg!(--debug "开启调试日志")];
 
-    // start时使用
-    // 布尔类型的参数即使不添加在command中，仍然可以使用get_flag获取，为false
+    // 向manager服务器发送start命令时使用
     let force_start_flag = [
         arg!(-f --force "忽略并发限制"),
     ];
-
-
-
+    
     Command::new("rtsynctl")
         .version(rtsync::version::VERSION)
         .about("rtsync manager的控制客户端 一个tunasynctl(https://github.com/tuna/tunasync)的rust实现版本")

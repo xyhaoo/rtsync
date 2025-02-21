@@ -11,6 +11,7 @@ use tokio::sync::{Mutex, MutexGuard, RwLock, Semaphore};
 use internal::msg::{CmdVerb, MirrorSchedule, MirrorSchedules, MirrorStatus, WorkerCmd, WorkerStatus};
 use internal::util::{create_http_client, get_json, post_json};
 use libc::getpid;
+use nix::NixPath;
 use nix::sys::signal::{kill, Signal};
 use rocket::http::Status;
 use rocket::serde::Serialize;
@@ -430,9 +431,16 @@ impl Worker {
     async fn url(&self) -> String {
         let cfg_lock = self.cfg.read().await;
         let mut proto = "https";
-        if cfg_lock.server.ssl_cert.is_none() || cfg_lock.server.ssl_key.is_none(){
+        
+        // XXX: 由于反序列化需要在未提供字段时令字段为空值，使用了Option<T>，然而如果T为String，""就可以表示其为空
+        if cfg_lock.server.ssl_cert.as_ref().is_none() || 
+            cfg_lock.server.ssl_cert.as_ref().is_some_and(|cert| cert.is_empty()) || 
+            cfg_lock.server.ssl_key.as_ref().is_none() || 
+            cfg_lock.server.ssl_key.as_ref().is_some_and(|key| key.is_empty())
+        {
             proto = "http";
         }
+        
         format!("{}://{}:{}/", proto, cfg_lock.server.hostname.clone().unwrap(),
                 cfg_lock.server.listen_port.clone().unwrap())
     }
