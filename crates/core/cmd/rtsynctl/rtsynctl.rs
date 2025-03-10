@@ -49,10 +49,10 @@ fn load_config(cfg_file: &str, cfg: &mut Config) -> Result<()>{
 
 async fn initialize(c: &ArgMatches) -> Result<()>{
     // init logger
-    rtsync::logger::init_logger(true, true, false);
-    // rtsync::logger::init_logger(c.get_flag("verbose"),
-    //                             c.get_flag("debug"),
-    //                             false);
+    // rtsync::logger::init_logger(true, true, false);
+    rtsync::logger::init_logger(c.get_flag("verbose"),
+                                c.get_flag("debug"),
+                                false);
 
     let mut cfg = Config::default();
 
