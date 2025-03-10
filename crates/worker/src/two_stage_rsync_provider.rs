@@ -404,6 +404,10 @@ impl MirrorProvider for TwoStageRsyncProvider {
         self.base_provider.read().await.log_file().await
     }
 
+    async fn is_master(&self) -> bool {
+        self.base_provider.read().await.is_master
+    }
+
     async fn data_size(&self) -> String {
         self.data_size.lock().await.to_string()
     }

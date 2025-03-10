@@ -533,7 +533,7 @@ sleep 10
         };
 
         let mut provider = CmdProvider::new(c.clone()).await.unwrap();
-        assert_eq!(provider.is_master(), false);
+        assert_eq!(provider.is_master().await, false);
         assert!(provider.zfs().is_none());
         assert_eq!(provider.r#type(), ProviderEnum::Command);
         assert_eq!(provider.working_dir().await, c.working_dir);

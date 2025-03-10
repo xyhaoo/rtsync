@@ -11,7 +11,6 @@ use tokio::sync::{Mutex, MutexGuard, RwLock, Semaphore};
 use internal::msg::{CmdVerb, MirrorSchedule, MirrorSchedules, MirrorStatus, WorkerCmd, WorkerStatus};
 use internal::util::{create_http_client, get_json, post_json};
 use libc::getpid;
-use nix::NixPath;
 use nix::sys::signal::{kill, Signal};
 use rocket::http::Status;
 use rocket::serde::Serialize;
@@ -139,8 +138,7 @@ impl Worker {
         self.exit.0 = None;
     }
 
-    // ReloadMirrorConfig refresh the providers and jobs
-    // from new mirror configs
+    // ReloadMirrorConfig 根据新的镜像配置文件刷新 providers 和 jobs
     // TODO: deleted job should be removed from manager-side mirror list
     pub async fn reload_mirror_config(&self, new_mirrors: Vec<MirrorConfig>) {
         let lock = self.worker_manager.l.lock().await;
@@ -160,7 +158,7 @@ impl Worker {
             let mut jobs_lock = self.worker_manager.jobs.write().await;
             match jobs_lock.get_mut(name) {
                 None => {
-                    warn!("Job {} not found", name);
+                    warn!("Job {} 未找到", name);
                     continue;
                 },
                 Some(job) => {
@@ -171,7 +169,7 @@ impl Worker {
                             self.disable_job(job, &mut list_lock, &mut job_lock).await;
                             drop((list_lock, job_lock));
                             jobs_lock.remove(name);
-                            info!("Deleted job {}", name);
+                            info!("删除 job {}", name);
                         },
                         Diff::Modify => {
                             let job_state = job.state();
@@ -180,7 +178,7 @@ impl Worker {
                             // set new provider
                             let provider = new_mirror_provider(op.mir_cfg.clone(), self.cfg.read().await.clone()).await;
                             if let Err(e) = job.set_provider(provider){
-                                error!("Error setting job provider of {}: {}", name, e);
+                                error!("设置 job provider {} 失败: {}", name, e);
                                 continue;
                             }
 
@@ -217,7 +215,7 @@ impl Worker {
             }
         } // for
 
-        // for added new jobs, just start new jobs
+        // 对于新增的jobs，直接将其启动
         for op in difference {
             if op.diff_op != Diff::Add{
                 continue;
@@ -476,7 +474,7 @@ impl Worker {
         let mut smsg = MirrorStatus{
             name: job_msg.name.clone(),
             worker: self.cfg.read().await.global.name.clone().unwrap(),
-            is_master: job.provider.is_master(),
+            is_master: job.provider.is_master().await,
             status: job_msg.status,
             upstream: job.provider.upstream(),
             size: "unknown".to_string(),
@@ -496,9 +494,9 @@ impl Worker {
         let cfg_lock = self.cfg.read().await;
         for root in cfg_lock.manager.api_base_list(){
             let url = format!("{}/workers/{}/jobs/{}", root, name, job_msg.name);
-            debug!("reporting on manager url: {}", url);
+            debug!("报告给 manager 服务器: {}", url);
             if let Err(e) = post_json(&url, &smsg, Some(self.http_client.clone())).await{
-                error!("Failed to update mirror({}) status: {}", job_msg.name, e);
+                error!("更新 mirror({}) 状态失败: {}", job_msg.name, e);
             }
         }
     }
@@ -520,9 +518,9 @@ impl Worker {
         let cfg_lock = self.cfg.read().await;
         for root in cfg_lock.manager.api_base_list(){
             let url = format!("{}/workers/{}/schedules", root, name);
-            debug!("reporting on manager url: {}", url);
+            debug!("报告给 manager 服务器: {}", url);
             if let Err(e) = post_json(&url, &msg, Some(self.http_client.clone())).await {
-                error!("Failed to upload schedules: {}", e);
+                error!("上传 schedule 失败: {}", e);
             }
         }
     }

@@ -110,7 +110,7 @@ mod tests {
     }
     fn test_exiting_from_bottom_context(ctx: Context) {
         let result = ctx.exit();
-        assert_eq!(result.is_err(), true);
+        assert!(result.is_err());
     }
     
     #[test]

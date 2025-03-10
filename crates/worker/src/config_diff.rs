@@ -78,13 +78,13 @@ pub(crate) fn diff_mirror_config(old_list: &Vec<MirrorConfig>, new_list: &Vec<Mi
 
     if o_list.len() != 0 && n_list.len() != 0{
         // 在两个list中插入尾节点作为最大节点
-        let (last_ord, last_new) =
+        let (last_old, last_new) =
             (o_list[o_list.len()-1].clone(), n_list[n_list.len()-1].clone());
 
         // 😅
-        let mut max_name = last_ord.0.name.clone().unwrap_or(String::new());
-        if last_new.0.name.as_ref().unwrap_or(&String::new()) > last_ord.0.name.as_ref().unwrap_or(&String::new()){
-            max_name = last_new.0.name.unwrap_or(String::new())
+        let mut max_name = last_old.0.name.clone().unwrap_or_default();
+        if last_new.0.name.as_ref().unwrap_or(&String::new()) > last_old.0.name.as_ref().unwrap_or(&String::new()){
+            max_name = last_new.0.name.unwrap_or_default()
         }
         let nil = MirrorConfig{
             name: Some(format!("~{}",max_name)),
@@ -99,7 +99,7 @@ pub(crate) fn diff_mirror_config(old_list: &Vec<MirrorConfig>, new_list: &Vec<Mi
         // 遍历两个list，找到差别
         let (mut i,mut j) = (0,0);
         while  i<o_list.len() && j<n_list.len(){
-            let (o, n) = (o_list[i].clone(), n_list[j].clone());
+            let (o, n) = (&o_list[i], &n_list[j]);
             if n.0.name < o.0.name{
                 operations.push(MirrorCfgTrans{diff_op: Diff::Add, mir_cfg: n.0.clone()});
                 j+=1;

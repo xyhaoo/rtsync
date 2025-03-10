@@ -69,7 +69,7 @@ pub trait MirrorProvider: Send + Sync + std::fmt::Debug {
     async fn log_dir(&self) -> String;
     async fn log_file(&self) -> String;
     
-    fn is_master(&self) -> bool {false}
+    async fn is_master(&self) -> bool;
     async fn data_size(&self) -> String;
 
     // enter context

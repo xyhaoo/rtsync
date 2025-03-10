@@ -68,9 +68,9 @@ unsafe impl Sync for RsyncProvider{}
 impl RsyncProvider {
     pub(crate) async fn new(mut c: RsyncConfig) -> Result<Self> {
         // TODO: 检查config选项
-        // if !c.upstream_url.ends_with("/"){
-        //     return Err(anyhow!("rsync上游URL应该以'/'结尾"));
-        // }
+        if !c.upstream_url.ends_with("/"){
+            return Err(anyhow!("rsync上游URL应该以'/'结尾"));
+        }
         if c.retry == 0{
             c.retry = DEFAULT_MAX_RETRY;
         }
@@ -384,6 +384,10 @@ impl MirrorProvider for RsyncProvider  {
 
     async fn log_file(&self) -> String {
         self.base_provider.read().await.log_file().await
+    }
+
+    async fn is_master(&self) -> bool {
+        self.base_provider.read().await.is_master
     }
 
     async fn data_size(&self) -> String {
