@@ -13,14 +13,14 @@ pub(crate) fn build_cli() -> Command{
                     arg!(-c --config <FILE> "从 `FILE` 中加载 manager 配置"),
                     arg!(--addr <ADDR> "manager 监听 `ADDR` 端口"),
                     arg!(--port <PORT> "manager 绑定 `PORT`"),
-                    arg!(--cert <FILE> "使用 `FILE` 中的SSL证书"),
-                    arg!(--key <FILE> "使用 `FILE` 中的SSL密钥"),
+                    arg!(--cert <CERT_PATH> "指定SSL证书路径为 `CERT_PATH` "),
+                    arg!(--key <KEY_PATH> "指定SSL密钥为 `KEY_PATH` "),
                     Arg::new("db-file").long("db-file")
-                        .value_name("FILE").action(ArgAction::Set)
-                        .help("使用 `FILE` 中的数据库文件"),
+                        .value_name("DB_PATH").action(ArgAction::Set)
+                        .help("指定数据库存放路径为 `DB_PATH` "),
                     Arg::new("db-type").long("db-type")
-                        .value_name("TYPE").action(ArgAction::Set)
-                        .help("使用 `TYPE` 作为数据库类型"),
+                        .value_name("DB_TYPE").action(ArgAction::Set)
+                        .help("指定数据库类型为 `DB_TYPE` "),
                     arg!(-v --verbose "启用详细日志记录"),
                     arg!(--debug "以 debug 模式启动 manager"),
                     Arg::new("with-systemd").long("with-systemd")

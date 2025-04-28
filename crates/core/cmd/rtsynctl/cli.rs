@@ -9,7 +9,7 @@ pub(crate) fn build_cli() -> Command{
         arg!(-p --port <PORT> "设定 manager 服务器端口号"),
         Arg::new("ca-cert").long("ca-cert")
             .value_name("CERT").action(ArgAction::Set)
-            .help("信任根CA证书文件 `CERT`"),
+            .help("指定`CERT`为信任根CA证书文件路径"),
         arg!(-v --verbose "启用详细日志记录"),
         arg!(--debug "开启调试日志")];
 

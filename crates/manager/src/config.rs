@@ -48,7 +48,7 @@ pub fn load_config(cfg_file: Option<String>, c: &ArgMatches) -> Result<Config>{
     cfg.server.port = Some(14242);
     cfg.debug = false;
     cfg.files.status_file = Some("/var/lib/rtsync/rtsync.json".to_string());
-    cfg.files.db_file = Some("bolt".to_string());
+    cfg.files.db_file = Some("leveldb".to_string());
     
     if let Some(cfg_file) = cfg_file {
         if !cfg_file.is_empty(){
