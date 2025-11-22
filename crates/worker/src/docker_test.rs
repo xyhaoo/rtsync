@@ -6,12 +6,10 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use crate::docker::*;
     use std::process::Command;
-    use std::sync::{Arc, RwLock};
     use chrono::Duration;
     use tempfile::Builder;
     use tokio::sync::mpsc::channel;
     use crate::cmd_provider::{CmdConfig, CmdProvider};
-    use crate::common::Empty;
     use crate::config::MemBytes;
     use crate::hooks::{HookType, JobHook};
     use crate::provider::MirrorProvider;

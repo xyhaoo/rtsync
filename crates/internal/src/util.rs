@@ -97,7 +97,7 @@ pub fn create_http_client(ca_file: Option<&str>) -> Result<Client, reqwest::Erro
     Ok(client)
 }
 
-// Post JSON data to a URL
+// 向一个URL发送post请求，附带json文件
 pub async fn post_json<T: Serialize + Send>(url: &str, obj: &T, client: Option<Client>) -> Result<reqwest::Response, reqwest::Error> {
     let response = match client.as_ref() {
         Some(client) => {
@@ -121,7 +121,7 @@ pub async fn post_json<T: Serialize + Send>(url: &str, obj: &T, client: Option<C
     Ok(response)
 }
 
-// Get JSON response from a URL
+// 向一个URL发送get请求，将获得的json文件反序列化
 pub async fn get_json<T: for<'de> Deserialize<'de>>(url: &str, client: Option<Client>) -> Result<T, reqwest::Error> {
     match client.as_ref() {
         None => {

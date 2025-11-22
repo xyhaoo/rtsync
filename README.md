@@ -21,7 +21,7 @@ An implementation of [tunasync](https://github.com/tuna/tunasync) in Rust, so it
 
 
 使用时烦请注意：
-1. worker的配置文件 `worker.conf` 中 `[global]` 的 `log_dir`  字段格式请使用 `log_dir = "/srv/rtsync/log/rtsync/{{ name }}"`  而不是  `log_dir = "/srv/rtsync/log/rtsync/{{.Name}}"`  ；
+1. worker的配置文件 `worker.conf` 中 `[global]` 的 `log_dir`  字段格式请使用 `log_dir = "/src/rtsync/log/rtsync/{{ name }}"`  而不是  `log_dir = "/src/rtsync/log/rtsync/{{.Name}}"`  ；
 2. 数据库类型默认为 leveldb ；
 
 

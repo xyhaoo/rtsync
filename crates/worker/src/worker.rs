@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, FixedOffset, Utc};
 use log::{debug, error, info, warn};
 use nix::unistd::Pid;
 use rocket::{post, routes, Build, Rocket, State};
@@ -381,9 +381,12 @@ impl Worker {
                     // 只有同步任务成功或失败时发送的schedule信号（都为true）才会触发该任务的下一次同步调度
                     if job_msg.schedule {
                         let schedule_time = Utc::now() + job.provider.interval();
+                         // +8 hours，以东八区显示
+                        let local_time = schedule_time
+                            .with_timezone(&FixedOffset::east_opt(8 * 3600).unwrap());
                         info!("{} 的下一次同步时间: {}",
                             job.name(),
-                            schedule_time.format("%Y-%m-%d %H:%M:%S"));
+                            local_time.format("%Y-%m-%d %H:%M:%S"));
                         self.worker_manager.schedule.add_job(schedule_time, job.clone()).await;
                     }
                     let sched_info = self.worker_manager.schedule.get_jobs().await;

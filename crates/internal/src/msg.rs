@@ -7,7 +7,7 @@ use std::fmt;
 use std::collections::HashMap;
 use crate::status::SyncStatus;
 
-// 当一个worker完成同步时，MirrorStatus表示一个msg
+// 当一个worker结束同步时，MirrorStatus表示其状态信息
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
 pub struct MirrorStatus {
     pub name: String,
